@@ -1,5 +1,7 @@
 """
 נקודת הכניסה הראשית למשחק: קריאת קלט ולולאת הפקודות.
+
+# Git repo: https://github.com/ayalaDaube/Kung-Fo_Chess
 """
 
 import sys
@@ -7,6 +9,7 @@ import sys
 from handlers import handle_click, handle_wait, handle_jump
 from board_logic import validate_board, print_board
 from game_state import ChessGame
+from movement import RuleEngine
 
 
 def parse_input(input_data):
@@ -18,14 +21,14 @@ def parse_input(input_data):
 
 
 _COMMAND_HANDLERS = {
-    "click": lambda args, game: handle_click(int(args[0]), int(args[1]), game),
-    "wait": lambda args, game: handle_wait(int(args[0]), game),
-    "print": lambda args, game: print_board(game.board),
-    "jump": lambda args, game: handle_jump(int(args[0]), int(args[1]), game),
+    "click": lambda args, game, engine: handle_click(int(args[0]), int(args[1]), game, engine),
+    "wait":  lambda args, game, engine: handle_wait(int(args[0]), game),
+    "print": lambda args, game, engine: print_board(game),
+    "jump":  lambda args, game, engine: handle_jump(int(args[0]), int(args[1]), game),
 }
 
 
-def run_command(command, game):
+def run_command(command, game, engine=None):
     """מריצה פקודה בודדת (click/wait/print/jump) על ה-state של המשחק."""
     parts = command.split()
     if not parts:
@@ -34,7 +37,7 @@ def run_command(command, game):
     cmd_name, args = parts[0], parts[1:]
     handler = _COMMAND_HANDLERS.get(cmd_name)
     if handler:
-        handler(args, game)
+        handler(args, game, engine or RuleEngine.default())
 
 
 def main():
@@ -55,5 +58,5 @@ def main():
         run_command(command, game)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

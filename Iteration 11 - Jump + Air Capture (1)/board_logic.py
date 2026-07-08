@@ -42,7 +42,14 @@ def is_valid_token(token):
     return color in VALID_COLORS and piece_type in VALID_PIECE_TYPES
 
 
-def print_board(board):
+def board_to_string(game):
+    """מחזירה את הלוח כמחרוזת אחת (שורות מופרדות ב-newline)."""
+    return "\n".join(
+        " ".join(game.get_piece(r, c) for c in range(game.num_cols()))
+        for r in range(game.num_rows())
+    )
+
+
+def print_board(game):
     """מדפיסה את הלוח, שורה בכל שורת פלט, תאים מופרדים ברווח."""
-    for row in board:
-        print(" ".join(row))
+    print(board_to_string(game))

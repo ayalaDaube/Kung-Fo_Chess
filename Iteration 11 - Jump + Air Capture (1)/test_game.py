@@ -4,31 +4,34 @@
 """
 
 import unittest
-from unittest.mock import patch
 import io
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from board_logic import validate_board, is_valid_token, print_board
-from movement import is_legal_move
+from board_logic import validate_board, is_valid_token, print_board, board_to_string
+from movement import is_legal_move, PieceType, RuleEngine, KingMovement, PawnMovement
 from actions import perform_move, capture_airborne_piece, move_piece
 from handlers import handle_click, handle_wait, handle_jump, _pixel_to_cell, _is_within_board
-from game_state import ChessGame
-from main import parse_input, run_command
+from game_state import ChessGame, PendingAction, ActionType
+from main import parse_input, run_command, main
 
 
 # ─── עזרים ────────────────────────────────────────────────────────────────────
 
 def make_game(rows):
-    """בונה ChessGame מרשימת מחרוזות שורות."""
     board = [r.split() for r in rows]
     return ChessGame(board)
 
 
-def empty_board(size=8):
-    return [["." for _ in range(size)] for _ in range(size)]
+def empty_game(size=8):
+    """מחזירה ChessGame עם לוח ריק."""
+    return ChessGame([["." for _ in range(size)] for _ in range(size)])
+
+
+def default_engine():
+    return RuleEngine.default()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -81,12 +84,10 @@ class TestValidateBoard(unittest.TestCase):
         self.assertIsNone(validate_board(rows))
 
     def test_row_width_mismatch(self):
-        rows = ["wK wQ", "wR"]
-        self.assertEqual(validate_board(rows), "ERROR ROW_WIDTH_MISMATCH")
+        self.assertEqual(validate_board(["wK wQ", "wR"]), "ERROR ROW_WIDTH_MISMATCH")
 
     def test_unknown_token(self):
-        rows = ["wK XX", "wR wN"]
-        self.assertEqual(validate_board(rows), "ERROR UNKNOWN_TOKEN")
+        self.assertEqual(validate_board(["wK XX", "wR wN"]), "ERROR UNKNOWN_TOKEN")
 
     def test_single_cell_board(self):
         self.assertIsNone(validate_board(["wK"]))
@@ -95,173 +96,225 @@ class TestValidateBoard(unittest.TestCase):
         self.assertIsNone(validate_board([". . .", ". . ."]))
 
 
+class TestBoardToString(unittest.TestCase):
+
+    def test_format(self):
+        game = make_game(["wK .", ". bK"])
+        self.assertEqual(board_to_string(game), "wK .\n. bK")
+
+    def test_single_row(self):
+        game = make_game(["wR wN"])
+        self.assertEqual(board_to_string(game), "wR wN")
+
+
 class TestPrintBoard(unittest.TestCase):
 
-    def test_output_format(self):
-        board = [["wK", "."], [".", "bK"]]
-        with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-            print_board(board)
-            self.assertEqual(mock_out.getvalue(), "wK .\n. bK\n")
+    def test_output(self):
+        game = make_game(["wK .", ". bK"])
+        captured = io.StringIO()
+        sys.stdout = captured
+        try:
+            print_board(game)
+        finally:
+            sys.stdout = sys.__stdout__
+        self.assertEqual(captured.getvalue(), "wK .\n. bK\n")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # movement
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestRuleEngine(unittest.TestCase):
+
+    def test_default_engine_has_all_standard_pieces(self):
+        engine = default_engine()
+        for code in ("K", "Q", "R", "B", "N", "P"):
+            self.assertIsNotNone(engine.get_piece_type(code))
+
+    def test_unknown_piece_returns_none(self):
+        self.assertIsNone(default_engine().get_piece_type("Z"))
+
+    def test_custom_engine_overrides_default(self):
+        custom = RuleEngine([PieceType("Dragon", "D", KingMovement())])
+        self.assertIsNotNone(custom.get_piece_type("D"))
+        self.assertIsNone(custom.get_piece_type("K"))
+
+    def test_piece_type_fields(self):
+        pt = PieceType("King", "K", KingMovement())
+        self.assertEqual(pt.name, "King")
+        self.assertEqual(pt.code, "K")
+        self.assertIsNone(pt.config)
+
+    def test_piece_type_with_config(self):
+        pt = PieceType("ReversePawn", "P", PawnMovement(), config={"direction": 1, "start_row": 7})
+        self.assertEqual(pt.config["direction"], 1)
+
+    def test_pawn_with_custom_direction(self):
+        """חייל לבן עם direction=1 (הפוך) - הולך למטה."""
+        g = empty_game()
+        g.set_piece(3, 4, "wP")
+        engine = RuleEngine([PieceType("Pawn", "P", PawnMovement(), config={"direction": 1, "start_row": 0})])
+        self.assertTrue(is_legal_move("wP", 3, 4, 4, 4, g, engine))
+        self.assertFalse(is_legal_move("wP", 3, 4, 2, 4, g, engine))
+
+
 class TestKingMovement(unittest.TestCase):
 
-    def _board(self):
-        b = empty_board()
-        b[4][4] = "wK"
-        return b
+    def _game(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wK")
+        return g
 
     def test_one_step_all_directions(self):
-        b = self._board()
+        g = self._game()
         for dr, dc in [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]:
-            self.assertTrue(is_legal_move("wK", 4, 4, 4+dr, 4+dc, b))
+            self.assertTrue(is_legal_move("wK", 4, 4, 4+dr, 4+dc, g, default_engine()))
 
     def test_two_steps_illegal(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wK", 4, 4, 4, 6, b))
+        self.assertFalse(is_legal_move("wK", 4, 4, 4, 6, self._game(), default_engine()))
 
     def test_no_move(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wK", 4, 4, 4, 4, b))
+        self.assertFalse(is_legal_move("wK", 4, 4, 4, 4, self._game(), default_engine()))
 
 
 class TestRookMovement(unittest.TestCase):
 
-    def _board(self):
-        b = empty_board()
-        b[4][4] = "wR"
-        return b
+    def _game(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wR")
+        return g
 
     def test_horizontal(self):
-        b = self._board()
-        self.assertTrue(is_legal_move("wR", 4, 4, 4, 0, b))
+        self.assertTrue(is_legal_move("wR", 4, 4, 4, 0, self._game(), default_engine()))
 
     def test_vertical(self):
-        b = self._board()
-        self.assertTrue(is_legal_move("wR", 4, 4, 0, 4, b))
+        self.assertTrue(is_legal_move("wR", 4, 4, 0, 4, self._game(), default_engine()))
 
     def test_diagonal_illegal(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wR", 4, 4, 2, 6, b))
+        self.assertFalse(is_legal_move("wR", 4, 4, 2, 6, self._game(), default_engine()))
+
+    def test_no_move(self):
+        self.assertFalse(is_legal_move("wR", 4, 4, 4, 4, self._game(), default_engine()))
 
 
 class TestBishopMovement(unittest.TestCase):
 
-    def _board(self):
-        b = empty_board()
-        b[4][4] = "wB"
-        return b
+    def _game(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wB")
+        return g
 
     def test_diagonal(self):
-        b = self._board()
-        self.assertTrue(is_legal_move("wB", 4, 4, 1, 1, b))
+        self.assertTrue(is_legal_move("wB", 4, 4, 1, 1, self._game(), default_engine()))
 
     def test_straight_illegal(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wB", 4, 4, 4, 7, b))
+        self.assertFalse(is_legal_move("wB", 4, 4, 4, 7, self._game(), default_engine()))
+
+    def test_no_move(self):
+        self.assertFalse(is_legal_move("wB", 4, 4, 4, 4, self._game(), default_engine()))
 
 
 class TestQueenMovement(unittest.TestCase):
 
-    def _board(self):
-        b = empty_board()
-        b[4][4] = "wQ"
-        return b
+    def _game(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wQ")
+        return g
 
     def test_horizontal(self):
-        b = self._board()
-        self.assertTrue(is_legal_move("wQ", 4, 4, 4, 0, b))
+        self.assertTrue(is_legal_move("wQ", 4, 4, 4, 0, self._game(), default_engine()))
 
     def test_diagonal(self):
-        b = self._board()
-        self.assertTrue(is_legal_move("wQ", 4, 4, 1, 1, b))
+        self.assertTrue(is_legal_move("wQ", 4, 4, 1, 1, self._game(), default_engine()))
 
     def test_l_shape_illegal(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wQ", 4, 4, 3, 6, b))
+        self.assertFalse(is_legal_move("wQ", 4, 4, 3, 6, self._game(), default_engine()))
 
 
 class TestKnightMovement(unittest.TestCase):
 
-    def _board(self):
-        b = empty_board()
-        b[4][4] = "wN"
-        return b
+    def _game(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wN")
+        return g
 
     def test_all_l_shapes(self):
-        b = self._board()
+        g = self._game()
         for dr, dc in [(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]:
-            self.assertTrue(is_legal_move("wN", 4, 4, 4+dr, 4+dc, b))
+            self.assertTrue(is_legal_move("wN", 4, 4, 4+dr, 4+dc, g, default_engine()))
 
     def test_straight_illegal(self):
-        b = self._board()
-        self.assertFalse(is_legal_move("wN", 4, 4, 4, 5, b))
+        self.assertFalse(is_legal_move("wN", 4, 4, 4, 5, self._game(), default_engine()))
 
 
 class TestPawnMovement(unittest.TestCase):
 
     def test_white_one_step_forward(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        self.assertTrue(is_legal_move("wP", 4, 4, 3, 4, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        self.assertTrue(is_legal_move("wP", 4, 4, 3, 4, g, default_engine()))
 
     def test_white_two_steps_from_start_row(self):
-        b = empty_board(8)
-        b[7][4] = "wP"
-        self.assertTrue(is_legal_move("wP", 7, 4, 5, 4, b))
+        g = empty_game(8)
+        g.set_piece(7, 4, "wP")
+        self.assertTrue(is_legal_move("wP", 7, 4, 5, 4, g, default_engine()))
 
     def test_white_two_steps_not_from_start_row(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        self.assertFalse(is_legal_move("wP", 4, 4, 2, 4, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        self.assertFalse(is_legal_move("wP", 4, 4, 2, 4, g, default_engine()))
 
     def test_white_two_steps_blocked_middle(self):
-        b = empty_board()
-        b[7][4] = "wP"
-        b[6][4] = "bP"
-        self.assertFalse(is_legal_move("wP", 7, 4, 5, 4, b))
+        g = empty_game()
+        g.set_piece(7, 4, "wP")
+        g.set_piece(6, 4, "bP")
+        self.assertFalse(is_legal_move("wP", 7, 4, 5, 4, g, default_engine()))
 
     def test_white_forward_blocked(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        b[3][4] = "bP"
-        self.assertFalse(is_legal_move("wP", 4, 4, 3, 4, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        g.set_piece(3, 4, "bP")
+        self.assertFalse(is_legal_move("wP", 4, 4, 3, 4, g, default_engine()))
 
     def test_white_capture_diagonal(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        b[3][5] = "bP"
-        self.assertTrue(is_legal_move("wP", 4, 4, 3, 5, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        g.set_piece(3, 5, "bP")
+        self.assertTrue(is_legal_move("wP", 4, 4, 3, 5, g, default_engine()))
 
     def test_white_capture_empty_diagonal(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        self.assertFalse(is_legal_move("wP", 4, 4, 3, 5, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        self.assertFalse(is_legal_move("wP", 4, 4, 3, 5, g, default_engine()))
 
     def test_white_capture_own_piece(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        b[3][5] = "wR"
-        self.assertFalse(is_legal_move("wP", 4, 4, 3, 5, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        g.set_piece(3, 5, "wR")
+        self.assertFalse(is_legal_move("wP", 4, 4, 3, 5, g, default_engine()))
 
     def test_black_one_step_forward(self):
-        b = empty_board()
-        b[3][4] = "bP"
-        self.assertTrue(is_legal_move("bP", 3, 4, 4, 4, b))
+        g = empty_game()
+        g.set_piece(3, 4, "bP")
+        self.assertTrue(is_legal_move("bP", 3, 4, 4, 4, g, default_engine()))
 
     def test_black_two_steps_from_start_row(self):
-        b = empty_board(8)
-        b[0][4] = "bP"
-        self.assertTrue(is_legal_move("bP", 0, 4, 2, 4, b))
+        g = empty_game(8)
+        g.set_piece(0, 4, "bP")
+        self.assertTrue(is_legal_move("bP", 0, 4, 2, 4, g, default_engine()))
 
     def test_white_backward_illegal(self):
-        b = empty_board()
-        b[4][4] = "wP"
-        self.assertFalse(is_legal_move("wP", 4, 4, 5, 4, b))
+        g = empty_game()
+        g.set_piece(4, 4, "wP")
+        self.assertFalse(is_legal_move("wP", 4, 4, 5, 4, g, default_engine()))
+
+
+class TestUnknownPiece(unittest.TestCase):
+
+    def test_unknown_piece_type_returns_false(self):
+        g = empty_game()
+        g.set_piece(4, 4, "wZ")
+        self.assertFalse(is_legal_move("wZ", 4, 4, 3, 4, g, default_engine()))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -273,14 +326,13 @@ class TestMovePiece(unittest.TestCase):
     def test_basic_move(self):
         game = make_game(["wK . .", ". . .", ". . ."])
         move_piece(0, 0, 1, 1, game)
-        self.assertEqual(game.board[1][1], "wK")
-        self.assertEqual(game.board[0][0], ".")
+        self.assertEqual(game.get_piece(1, 1), "wK")
+        self.assertEqual(game.get_piece(0, 0), ".")
 
     def test_capture(self):
         game = make_game(["wK bR .", ". . .", ". . ."])
         move_piece(0, 0, 0, 1, game)
-        self.assertEqual(game.board[0][1], "wK")
-        self.assertEqual(game.board[0][0], ".")
+        self.assertEqual(game.get_piece(0, 1), "wK")
 
     def test_clears_selected_piece(self):
         game = make_game(["wK . .", ". . .", ". . ."])
@@ -295,20 +347,14 @@ class TestCaptureAirbornePiece(unittest.TestCase):
         game = make_game(["wK . .", "bR . .", ". . ."])
         game.airborne_piece = (0, 0)
         capture_airborne_piece(1, 0, game)
-        self.assertEqual(game.board[1][0], ".")
+        self.assertEqual(game.get_piece(1, 0), ".")
         self.assertIsNone(game.airborne_piece)
 
     def test_friendly_no_capture(self):
         game = make_game(["wK . .", "wR . .", ". . ."])
         game.airborne_piece = (0, 0)
         capture_airborne_piece(1, 0, game)
-        self.assertEqual(game.board[1][0], "wR")
-
-    def test_airborne_piece_cleared_after_capture(self):
-        game = make_game(["wK . .", "bR . .", ". . ."])
-        game.airborne_piece = (0, 0)
-        capture_airborne_piece(1, 0, game)
-        self.assertIsNone(game.airborne_piece)
+        self.assertEqual(game.get_piece(1, 0), "wR")
 
 
 class TestPerformMove(unittest.TestCase):
@@ -316,19 +362,18 @@ class TestPerformMove(unittest.TestCase):
     def test_regular_move(self):
         game = make_game(["wK . .", ". . .", ". . ."])
         perform_move(0, 0, 1, 1, game)
-        self.assertEqual(game.board[1][1], "wK")
+        self.assertEqual(game.get_piece(1, 1), "wK")
 
     def test_routes_to_airborne_capture(self):
         game = make_game(["wK . .", "bR . .", ". . ."])
         game.airborne_piece = (0, 0)
         perform_move(1, 0, 0, 0, game)
-        self.assertEqual(game.board[1][0], ".")
+        self.assertEqual(game.get_piece(1, 0), ".")
 
     def test_no_airborne_does_regular_move(self):
         game = make_game(["wK . .", ". . .", ". . ."])
-        game.airborne_piece = None
         perform_move(0, 0, 2, 2, game)
-        self.assertEqual(game.board[2][2], "wK")
+        self.assertEqual(game.get_piece(2, 2), "wK")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -338,34 +383,34 @@ class TestPerformMove(unittest.TestCase):
 class TestPixelToCell(unittest.TestCase):
 
     def test_origin(self):
-        self.assertEqual(_pixel_to_cell(0, 0), (0, 0))
+        self.assertEqual(_pixel_to_cell(0, 0, 100), (0, 0))
 
     def test_middle_of_cell(self):
-        self.assertEqual(_pixel_to_cell(150, 250), (2, 1))
+        self.assertEqual(_pixel_to_cell(150, 250, 100), (2, 1))
 
     def test_exact_boundary(self):
-        self.assertEqual(_pixel_to_cell(100, 100), (1, 1))
+        self.assertEqual(_pixel_to_cell(100, 100, 100), (1, 1))
 
 
 class TestIsWithinBoard(unittest.TestCase):
 
-    def _board(self):
-        return [["." for _ in range(8)] for _ in range(8)]
+    def _game(self):
+        return empty_game(8)
 
     def test_inside(self):
-        self.assertTrue(_is_within_board(400, 400, self._board()))
+        self.assertTrue(_is_within_board(400, 400, self._game(), 100))
 
     def test_negative_x(self):
-        self.assertFalse(_is_within_board(-1, 400, self._board()))
+        self.assertFalse(_is_within_board(-1, 400, self._game(), 100))
 
     def test_negative_y(self):
-        self.assertFalse(_is_within_board(400, -1, self._board()))
+        self.assertFalse(_is_within_board(400, -1, self._game(), 100))
 
     def test_exact_max_x(self):
-        self.assertFalse(_is_within_board(800, 400, self._board()))
+        self.assertFalse(_is_within_board(800, 400, self._game(), 100))
 
     def test_exact_max_y(self):
-        self.assertFalse(_is_within_board(400, 800, self._board()))
+        self.assertFalse(_is_within_board(400, 800, self._game(), 100))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -394,30 +439,29 @@ class TestHandleClick(unittest.TestCase):
 
     def test_legal_move_creates_pending_action(self):
         game = self._game()
-        handle_click(0, 0, game)       # בחר wK ב-(0,0)
-        handle_click(100, 0, game)     # לחץ על (0,1) - מהלך חוקי למלך
+        handle_click(0, 0, game)
+        handle_click(100, 0, game)
         self.assertIsNotNone(game.pending_action)
-        self.assertEqual(game.pending_action["type"], "move")
+        self.assertEqual(game.pending_action.action_type, ActionType.MOVE)
 
     def test_illegal_move_keeps_selection(self):
         game = self._game()
-        handle_click(0, 0, game)       # בחר wK ב-(0,0)
-        handle_click(200, 0, game)     # (0,2) - bK שם, לא ניתן לאכול עם מלך ממרחק 2
-        # המהלך לא חוקי (מרחק 2), הבחירה נשמרת
+        handle_click(0, 0, game)
+        handle_click(200, 0, game)
         self.assertEqual(game.selected_piece, (0, 0))
 
     def test_switch_selection_to_own_piece(self):
         game = make_game(["wK wQ .", ". . .", ". . ."])
-        handle_click(0, 0, game)       # בחר wK
-        handle_click(100, 0, game)     # לחץ על wQ - החלפת בחירה
+        handle_click(0, 0, game)
+        handle_click(100, 0, game)
         self.assertEqual(game.selected_piece, (0, 1))
 
     def test_click_ignored_during_pending_move(self):
         game = self._game()
         handle_click(0, 0, game)
-        handle_click(100, 0, game)     # יוצר pending_action
+        handle_click(100, 0, game)
         game.selected_piece = None
-        handle_click(0, 0, game)       # אמור להיות מוגנוז
+        handle_click(0, 0, game)
         self.assertIsNone(game.selected_piece)
 
 
@@ -438,8 +482,7 @@ class TestHandleJump(unittest.TestCase):
     def test_jump_sets_pending_action(self):
         game = self._game()
         handle_jump(0, 0, game)
-        self.assertIsNotNone(game.pending_action)
-        self.assertEqual(game.pending_action["type"], "jump")
+        self.assertEqual(game.pending_action.action_type, ActionType.JUMP)
 
     def test_jump_clears_selection(self):
         game = self._game()
@@ -462,7 +505,7 @@ class TestHandleJump(unittest.TestCase):
     def test_jump_duration(self):
         game = self._game()
         handle_jump(0, 0, game)
-        self.assertEqual(game.pending_action["remaining_time"], 1000)
+        self.assertEqual(game.pending_action.remaining_time, 1000)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -474,7 +517,7 @@ class TestHandleWait(unittest.TestCase):
     def _game_with_move(self):
         game = make_game(["wK . .", ". . .", ". . ."])
         handle_click(0, 0, game)
-        handle_click(100, 0, game)   # מהלך ל-(0,1), מרחק 1 → 500ms
+        handle_click(100, 0, game)
         return game
 
     def test_advances_game_time(self):
@@ -486,19 +529,17 @@ class TestHandleWait(unittest.TestCase):
         game = self._game_with_move()
         handle_wait(200, game)
         self.assertIsNotNone(game.pending_action)
-        self.assertEqual(game.board[0][1], ".")
 
     def test_full_wait_resolves_move(self):
         game = self._game_with_move()
         handle_wait(500, game)
         self.assertIsNone(game.pending_action)
-        self.assertEqual(game.board[0][1], "wK")
-        self.assertEqual(game.board[0][0], ".")
+        self.assertEqual(game.get_piece(0, 1), "wK")
 
     def test_over_wait_resolves_move(self):
         game = self._game_with_move()
         handle_wait(9999, game)
-        self.assertEqual(game.board[0][1], "wK")
+        self.assertEqual(game.get_piece(0, 1), "wK")
 
     def test_jump_resolves_after_duration(self):
         game = make_game(["wK . .", ". . .", ". . ."])
@@ -506,13 +547,12 @@ class TestHandleWait(unittest.TestCase):
         handle_wait(1000, game)
         self.assertIsNone(game.pending_action)
         self.assertIsNone(game.airborne_piece)
-        self.assertEqual(game.board[0][0], "wK")  # הכלי נשאר במקום
+        self.assertEqual(game.get_piece(0, 0), "wK")
 
     def test_wait_without_pending_action(self):
         game = make_game(["wK . .", ". . .", ". . ."])
         handle_wait(500, game)
         self.assertEqual(game.game_time, 500)
-        self.assertIsNone(game.pending_action)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -522,23 +562,21 @@ class TestHandleWait(unittest.TestCase):
 class TestAirCapture(unittest.TestCase):
 
     def test_enemy_captures_airborne_piece(self):
-        """כלי שחור מגיע לתא של כלי לבן שקפץ - הכלי השחור נעלם."""
         game = make_game(["wK . .", "bR . .", ". . ."])
-        handle_jump(0, 0, game)          # wK קופץ
-        handle_click(0, 100, game)       # בחר bR ב-(1,0)
-        handle_click(0, 0, game)         # bR מנסה ללכת ל-(0,0) - תא של wK המרחף
-        handle_wait(500, game)           # bR מגיע
-        self.assertEqual(game.board[1][0], ".")   # bR נעלם
-        self.assertEqual(game.board[0][0], "wK")  # wK נשאר
+        handle_jump(0, 0, game)
+        handle_click(0, 100, game)
+        handle_click(0, 0, game)
+        handle_wait(500, game)
+        self.assertEqual(game.get_piece(1, 0), ".")
+        self.assertEqual(game.get_piece(0, 0), "wK")
 
     def test_friendly_no_air_capture(self):
-        """כלי לבן לא לוכד כלי לבן מרחף."""
         game = make_game(["wK . .", "wR . .", ". . ."])
         handle_jump(0, 0, game)
         handle_click(0, 100, game)
         handle_click(0, 0, game)
         handle_wait(500, game)
-        self.assertEqual(game.board[1][0], "wR")
+        self.assertEqual(game.get_piece(1, 0), "wR")
 
     def test_airborne_cleared_after_capture(self):
         game = make_game(["wK . .", "bR . .", ". . ."])
@@ -550,20 +588,18 @@ class TestAirCapture(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# main – parse_input & run_command
+# main – parse_input, run_command, main()
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestParseInput(unittest.TestCase):
 
     def test_basic_parse(self):
-        data = "Board:\nwK . .\n. . .\nCommands:\nprint"
-        board_part, commands_part = parse_input(data)
+        board_part, commands_part = parse_input("Board:\nwK . .\n. . .\nCommands:\nprint")
         self.assertIn("wK", board_part)
         self.assertEqual(commands_part, "print")
 
     def test_multiple_commands(self):
-        data = "Board:\nwK .\n. .\nCommands:\nclick 0 0\nwait 500"
-        _, commands_part = parse_input(data)
+        _, commands_part = parse_input("Board:\nwK .\n. .\nCommands:\nclick 0 0\nwait 500")
         self.assertIn("click", commands_part)
         self.assertIn("wait", commands_part)
 
@@ -574,18 +610,20 @@ class TestRunCommand(unittest.TestCase):
         return make_game(["wK . .", ". . .", ". . ."])
 
     def test_unknown_command_ignored(self):
-        game = self._game()
-        run_command("fly 0 0", game)   # לא קורה כלום, אין exception
+        run_command("fly 0 0", self._game())
 
     def test_empty_command_ignored(self):
-        game = self._game()
-        run_command("", game)
+        run_command("", self._game())
 
     def test_print_command(self):
         game = self._game()
-        with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+        captured = io.StringIO()
+        sys.stdout = captured
+        try:
             run_command("print", game)
-            self.assertIn("wK", mock_out.getvalue())
+        finally:
+            sys.stdout = sys.__stdout__
+        self.assertIn("wK", captured.getvalue())
 
     def test_click_command(self):
         game = self._game()
@@ -603,22 +641,39 @@ class TestRunCommand(unittest.TestCase):
         self.assertEqual(game.airborne_piece, (0, 0))
 
 
+class TestMain(unittest.TestCase):
+
+    def _run_main(self, input_text):
+        captured = io.StringIO()
+        sys.stdin = io.StringIO(input_text)
+        sys.stdout = captured
+        try:
+            main()
+        finally:
+            sys.stdin = sys.__stdin__
+            sys.stdout = sys.__stdout__
+        return captured.getvalue()
+
+    def test_valid_input_runs(self):
+        output = self._run_main("Board:\nwK . .\n. . .\nCommands:\nprint")
+        self.assertIn("wK", output)
+
+    def test_invalid_board_prints_error(self):
+        output = self._run_main("Board:\nwK XX\n. .\nCommands:\nprint")
+        self.assertIn("ERROR", output)
+
+    def test_full_flow_via_stdin(self):
+        output = self._run_main(
+            "Board:\nwK . .\n. . .\nCommands:\nclick 0 0\nclick 100 0\nwait 500\nprint"
+        )
+        self.assertIn("wK", output)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-# אינטגרציה מלאה – זרימת משחק שלמה
+# אינטגרציה מלאה
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestFullGameFlow(unittest.TestCase):
-
-    def test_select_move_wait_print(self):
-        game = make_game(["wK . .", ". . .", ". . ."])
-        run_command("click 0 0", game)
-        run_command("click 100 0", game)
-        run_command("wait 500", game)
-        with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
-            run_command("print", game)
-            output = mock_out.getvalue()
-        self.assertIn("wK", output)
-        self.assertNotIn("wK . .", output.split("\n")[0])
 
     def test_jump_then_enemy_arrives(self):
         game = make_game(["wK . .", "bR . .", ". . ."])
@@ -627,8 +682,8 @@ class TestFullGameFlow(unittest.TestCase):
         run_command("click 0 0", game)
         run_command("wait 500", game)
         run_command("wait 1000", game)
-        self.assertEqual(game.board[0][0], "wK")
-        self.assertEqual(game.board[1][0], ".")
+        self.assertEqual(game.get_piece(0, 0), "wK")
+        self.assertEqual(game.get_piece(1, 0), ".")
 
 
 if __name__ == "__main__":

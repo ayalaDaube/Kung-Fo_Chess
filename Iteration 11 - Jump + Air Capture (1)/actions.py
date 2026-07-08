@@ -15,8 +15,8 @@ def capture_airborne_piece(from_r, from_c, game):
     """
     airborne_r, airborne_c = game.airborne_piece
 
-    arriving_piece = game.board[from_r][from_c]
-    airborne_piece = game.board[airborne_r][airborne_c]
+    arriving_piece = game.get_piece(from_r, from_c)
+    airborne_piece = game.get_piece(airborne_r, airborne_c)
 
     is_enemy = (
         arriving_piece != "."
@@ -25,14 +25,14 @@ def capture_airborne_piece(from_r, from_c, game):
     )
 
     if is_enemy:
-        game.board[from_r][from_c] = "."
+        game.set_piece(from_r, from_c, ".")
         game.airborne_piece = None
 
 
 def move_piece(from_r, from_c, to_r, to_c, game):
     """מהלך רגיל: מעבירה כלי מתא אחד לתא אחר."""
-    game.board[to_r][to_c] = game.board[from_r][from_c]
-    game.board[from_r][from_c] = "."
+    game.set_piece(to_r, to_c, game.get_piece(from_r, from_c))
+    game.set_piece(from_r, from_c, ".")
     game.selected_piece = None
 
 
