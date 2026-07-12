@@ -32,6 +32,17 @@ class RealTimeArbiter:
         """Returns the position of the piece currently airborne (jump), or None."""
         return self._airborne_pos
 
+    def get_motion_for(self, piece: Piece) -> Optional["Motion"]:
+        """Returns the active Motion for the given piece, or None."""
+        for m in self._active_motions:
+            if m.piece is piece:
+                return m
+        return None
+
+    @property
+    def ms_per_square(self) -> int:
+        return self._ms_per_square
+
     # ── commands ──────────────────────────────────────────────────────────────
 
     def start_motion(self, piece: Piece, source: Position, destination: Position) -> None:

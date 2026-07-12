@@ -42,7 +42,7 @@ class Controller:
             return ControllerResult("ignored")
 
         if self._selected is None:
-            piece = self._engine._board.get_piece(cell)
+            piece = self._engine.get_piece_at(cell)
             if piece is None:
                 return ControllerResult("ignored")
             self._selected = cell

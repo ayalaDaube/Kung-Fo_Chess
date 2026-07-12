@@ -1,5 +1,6 @@
 """
 Main entry point: reads DSL input from stdin and runs it.
+Git repository: https://github.com/ayalaDaube/Kung-Fo_Chess
 """
 import sys
 from kungfu_chess.texttests.script_runner import ScriptRunner

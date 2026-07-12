@@ -42,7 +42,7 @@ class RuleEngine:
         movements: option to replace/extend movement rules for a specific piece kind.
         """
         self._allow_friendly_capture = allow_friendly_capture
-        self._movements = movements or dict(self._DEFAULT_MOVEMENTS)
+        self._movements = movements if movements is not None else dict(self._DEFAULT_MOVEMENTS)
 
     def validate_move(self, board: Board, source: Position, destination: Position) -> MoveValidation:
         if not board.in_bounds(source) or not board.in_bounds(destination):

@@ -77,15 +77,10 @@ class PawnMovement(PieceMovement):
         )
         result = set()
 
-        # one step forward
+        # one step forward only — no double step
         fwd = Position(r + direction, c)
         if board.in_bounds(fwd) and board.get_piece(fwd) is None:
             result.add(fwd)
-            # double step from starting row
-            if r == start_row:
-                fwd2 = Position(r + 2 * direction, c)
-                if board.in_bounds(fwd2) and board.get_piece(fwd2) is None:
-                    result.add(fwd2)
 
         # diagonal capture — only if a piece occupies the target (friendly/enemy filtered by RuleEngine)
         for dc in (-1, 1):

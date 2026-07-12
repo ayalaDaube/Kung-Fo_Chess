@@ -1,81 +1,67 @@
 from kungfu_chess.io.board_parser import BoardParser
 from kungfu_chess.io.board_printer import BoardPrinter
-from kungfu_chess.model.board import Board
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.engine.game_engine import GameEngine
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
+from kungfu_chess.config_loader import load_config
+from kungfu_chess.texttests.script_parser import (
+    ScriptParser, BoardCommand, ClickCommand, JumpCommand, WaitCommand, PrintBoardCommand,
+)
 
 
 class ScriptRunner:
     """
-    Responsible for interpreting the DSL and running it through the public API.
+    Responsible for executing parsed DSL commands through the public API.
     Does not bypass Controller, GameEngine, or RealTimeArbiter.
-    Commands: Board, click, jump, wait, print board.
+    Delegates all parsing to ScriptParser.
     """
 
-    def __init__(self, cell_size: int = 100):
-        self._cell_size = cell_size
-        self._parser = BoardParser()
+    def __init__(self, cell_size: int = None):
+        config = load_config()
+        self._cell_size = cell_size if cell_size is not None else config.cell_size
+        self._ms_per_pixel = config.ms_per_pixel
+        self._jump_duration_ms = config.jump_duration_ms
+        self._board_parser = BoardParser()
         self._printer = BoardPrinter()
+        self._script_parser = ScriptParser()
 
     def run(self, script: str) -> list[str]:
         """
         Runs a DSL script. Returns a list of comparison errors (empty = all passed).
         """
-        lines = [l.rstrip() for l in script.splitlines()]
+        commands = self._script_parser.parse(script)
         errors = []
-        i = 0
         engine: GameEngine = None
         controller: Controller = None
 
-        while i < len(lines):
-            line = lines[i].strip()
-
-            if line == "Board":
-                board_lines, i = self._read_board_lines(lines, i + 1)
-                board = self._parser.parse("\n".join(board_lines))
+        for cmd in commands:
+            if isinstance(cmd, BoardCommand):
+                board = self._board_parser.parse("\n".join(cmd.lines))
                 rule_engine = RuleEngine()
-                arbiter = RealTimeArbiter(board, ms_per_square=self._cell_size * 10)
+                arbiter = RealTimeArbiter(
+                    board,
+                    ms_per_square=self._cell_size * self._ms_per_pixel,
+                    jump_duration_ms=self._jump_duration_ms,
+                )
                 engine = GameEngine(board, rule_engine, arbiter)
                 mapper = BoardMapper(board.width, board.height, self._cell_size)
                 controller = Controller(mapper, engine)
 
-            elif line.startswith("click "):
-                x, y = int(line.split()[1]), int(line.split()[2])
-                controller.click(x, y)
-                i += 1
+            elif isinstance(cmd, ClickCommand):
+                controller.click(cmd.x, cmd.y)
 
-            elif line.startswith("jump "):
-                x, y = int(line.split()[1]), int(line.split()[2])
-                controller.jump(x, y)
-                i += 1
+            elif isinstance(cmd, JumpCommand):
+                controller.jump(cmd.x, cmd.y)
 
-            elif line.startswith("wait "):
-                ms = int(line.split()[1])
-                engine.wait(ms)
-                i += 1
+            elif isinstance(cmd, WaitCommand):
+                engine.wait(cmd.ms)
 
-            elif line == "print board":
-                expected_lines, i = self._read_board_lines(lines, i + 1)
+            elif isinstance(cmd, PrintBoardCommand):
                 actual = self._printer.to_string(engine._board)
-                expected = "\n".join(expected_lines)
+                expected = "\n".join(cmd.expected_lines)
                 if actual != expected:
-                    errors.append(f"MISMATCH at line {i}:\nExpected:\n{expected}\nActual:\n{actual}")
-            else:
-                i += 1
+                    errors.append(f"MISMATCH:\nExpected:\n{expected}\nActual:\n{actual}")
 
         return errors
-
-    def _read_board_lines(self, lines: list[str], start: int) -> tuple[list[str], int]:
-        """Reads board lines until an empty line or a new command."""
-        result = []
-        i = start
-        while i < len(lines):
-            stripped = lines[i].strip()
-            if stripped == "" or stripped in ("print board", "Board") or stripped.startswith(("click ", "jump ", "wait ")):
-                break
-            result.append(stripped)
-            i += 1
-        return result, i

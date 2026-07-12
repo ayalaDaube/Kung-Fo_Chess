@@ -166,17 +166,11 @@ class TestPawnMovement(unittest.TestCase):
         dests = PawnMovement().legal_destinations(b, p)
         self.assertIn(Position(3, 4), dests)
 
-    def test_white_two_steps_from_start(self):
+    def test_white_no_double_step(self):
         b = empty_board(8)
         p = place(b, "wP", 7, 4)
         dests = PawnMovement().legal_destinations(b, p)
-        self.assertIn(Position(5, 4), dests)
-
-    def test_white_two_steps_not_from_start(self):
-        b = empty_board()
-        p = place(b, "wP", 4, 4)
-        dests = PawnMovement().legal_destinations(b, p)
-        self.assertNotIn(Position(2, 4), dests)
+        self.assertNotIn(Position(5, 4), dests)
 
     def test_white_blocked_forward(self):
         b = empty_board()
