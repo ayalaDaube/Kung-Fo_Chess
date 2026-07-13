@@ -3,7 +3,12 @@ Main entry point: reads DSL input from stdin and runs it.
 Git repository: https://github.com/ayalaDaube/Kung-Fo_Chess
 """
 import sys
-from kungfu_chess.texttests.script_runner import ScriptRunner
+try:
+    from kungfu_chess.texttests.script_runner import ScriptRunner
+except ModuleNotFoundError:
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from kungfu_chess.texttests.script_runner import ScriptRunner
 
 
 def main():

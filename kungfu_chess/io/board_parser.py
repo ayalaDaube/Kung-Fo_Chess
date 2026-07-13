@@ -45,6 +45,7 @@ class BoardParser:
                     color=color,
                     kind=kind,
                     cell=Position(r, c),
+                    start_row=r,
                 )
                 board.add_piece(piece)
 

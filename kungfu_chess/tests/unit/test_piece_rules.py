@@ -16,7 +16,7 @@ def empty_board(size=8) -> Board:
 def place(board: Board, code: str, row: int, col: int, pid: str = "p1") -> Piece:
     color = PieceColor.WHITE if code[0] == "w" else PieceColor.BLACK
     kind  = {k.value: k for k in PieceKind}[code[1]]
-    p = Piece(pid, color, kind, Position(row, col))
+    p = Piece(pid, color, kind, Position(row, col), start_row=row)
     board.add_piece(p)
     return p
 
@@ -167,11 +167,18 @@ class TestPawnMovement(unittest.TestCase):
         dests = PawnMovement().legal_destinations(b, p)
         self.assertIn(Position(3, 4), dests)
 
-    def test_white_no_double_step(self):
+    def test_white_double_step_from_start(self):
         b = empty_board(8)
         p = place(b, "wP", 7, 4)
         dests = PawnMovement().legal_destinations(b, p)
-        self.assertNotIn(Position(5, 4), dests)
+        self.assertIn(Position(5, 4), dests)
+
+    def test_white_no_double_step_not_from_start(self):
+        b = empty_board(8)
+        p = place(b, "wP", 4, 4)  # start_row=4, but we simulate it has moved by overriding
+        p.start_row = 7  # original start row was 7, piece is now at row 4 (already moved)
+        dests = PawnMovement().legal_destinations(b, p)
+        self.assertNotIn(Position(2, 4), dests)
 
     def test_white_blocked_forward(self):
         b = empty_board()

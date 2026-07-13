@@ -65,7 +65,7 @@ class ScriptRunner:
                 engine.wait(cmd.ms)
 
             elif isinstance(cmd, PrintBoardCommand):
-                actual = self._printer.to_string(engine._board)
+                actual = engine.board_string()
                 print(actual)
                 if cmd.expected_lines:
                     expected = "\n".join(cmd.expected_lines)

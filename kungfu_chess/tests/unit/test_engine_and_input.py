@@ -185,6 +185,33 @@ class TestRealTimeArbiter(unittest.TestCase):
         arbiter = RealTimeArbiter(board, ms_per_square=750)
         self.assertEqual(arbiter.ms_per_square, 750)
 
+    def test_collision_earlier_mover_loses(self):
+        """Covers lines 112-114: piece arrives at destination while enemy still moving there — arrives first loses."""
+        board = parse("wR . bR")
+        # wR: half square at ms_per_square=500 -> 500ms; bR: 1 square -> 1000ms, both heading to (0,1)
+        arbiter = RealTimeArbiter(board, ms_per_square=1000)
+        wR = board.get_piece(Position(0, 0))
+        bR = board.get_piece(Position(0, 2))
+        # manually set different remaining_ms so wR arrives first
+        arbiter.start_motion(wR, Position(0, 0), Position(0, 1))  # 1000ms
+        arbiter.start_motion(bR, Position(0, 2), Position(0, 1))  # 1000ms
+        # force wR to arrive first by reducing its remaining_ms
+        arbiter._active_motions[0].remaining_ms = 500
+        # after 500ms: wR arrives, bR still has 500ms left -> collision branch fires, bR loses
+        arbiter.advance_time(500)
+        self.assertEqual(bR.state, PieceState.CAPTURED)
+
+    def test_pawn_promotion_to_queen(self):
+        """Covers line 137: white pawn reaching row 0 becomes a queen."""
+        board = parse("wP .\n. .")
+        # place wP at row 1, move to row 0
+        board2 = parse(". .\nwP .")
+        arbiter = RealTimeArbiter(board2, ms_per_square=1000)
+        pawn = board2.get_piece(Position(1, 0))
+        arbiter.start_motion(pawn, Position(1, 0), Position(0, 0))
+        arbiter.advance_time(1000)
+        self.assertEqual(pawn.kind, PieceKind.QUEEN)
+
 
 # ── GameEngine ────────────────────────────────────────────────────────────────
 

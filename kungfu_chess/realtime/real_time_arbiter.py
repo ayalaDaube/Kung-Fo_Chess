@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 from kungfu_chess.model.position import Position
-from kungfu_chess.model.piece import Piece, PieceState
+from kungfu_chess.model.piece import Piece, PieceKind, PieceState
 from kungfu_chess.model.board import Board
 from kungfu_chess.realtime.motion import Motion, MotionType, ArrivalEvent
 
@@ -86,6 +86,25 @@ class RealTimeArbiter:
         arrived = [m for m in self._active_motions if m.remaining_ms <= 0]
         self._active_motions = [m for m in self._active_motions if m.remaining_ms > 0]
 
+        # simultaneous collision: two enemy MOVE motions crossing paths
+        # case 1: both heading to the same destination
+        # case 2: heading to each other's source (head-on swap)
+        # the one started first (earlier index) wins — the other is eliminated
+        eliminated_ids = set()
+        for i, m1 in enumerate(arrived):
+            if id(m1) in eliminated_ids or m1.motion_type != MotionType.MOVE:
+                continue
+            for m2 in arrived[i + 1:]:
+                if (id(m2) not in eliminated_ids
+                        and m2.motion_type == MotionType.MOVE
+                        and m2.piece.color != m1.piece.color
+                        and (m2.to_pos == m1.to_pos
+                             or (m1.to_pos == m2.from_pos and m2.to_pos == m1.from_pos))):
+                    self._board.remove_piece(m2.from_pos)
+                    m2.piece.state = PieceState.CAPTURED
+                    eliminated_ids.add(id(m2))
+        arrived = [m for m in arrived if id(m) not in eliminated_ids]
+
         # Resolve MOVE before JUMP so air-capture is checked while the piece is still airborne
         arrived.sort(key=lambda m: 0 if m.motion_type == MotionType.MOVE else 1)
 
@@ -101,6 +120,17 @@ class RealTimeArbiter:
             motion.piece.state = PieceState.IDLE
             self._airborne_pos = None
             return []  # jump ends on the same cell — no arrival event
+
+        # collision: if another MOVE motion is heading to the same destination,
+        # the one that started LATER (still moving) loses — the one that arrived first wins
+        for other in list(self._active_motions):
+            if (other.motion_type == MotionType.MOVE
+                    and other.to_pos == motion.to_pos
+                    and other.piece.color != motion.piece.color):
+                # motion arrived first; other is still moving — other loses
+                self._board.remove_piece(other.from_pos)
+                other.piece.state = PieceState.CAPTURED
+                self._active_motions.remove(other)
 
         # air-capture: check before board.move_piece
         # if the arriving piece reaches the cell of an airborne enemy — the arriving piece is eliminated
@@ -119,6 +149,7 @@ class RealTimeArbiter:
         captured = self._board.move_piece(motion.from_pos, motion.to_pos)
         motion.piece.state = PieceState.IDLE
         self._airborne_pos = None
+
         return [ArrivalEvent(
             arriving_piece=motion.piece,
             destination=motion.to_pos,

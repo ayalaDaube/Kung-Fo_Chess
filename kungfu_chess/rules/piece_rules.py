@@ -63,9 +63,11 @@ class PawnMovement(PieceMovement):
     direction and start_row are set in the constructor for flexibility.
     """
 
-    def __init__(self, direction: Optional[int] = None, start_row: Optional[int] = None):
+    def __init__(self, direction: Optional[int] = None, start_row: Optional[int] = None,
+                 min_board_height_for_double_step: int = 5):
         self._direction = direction
         self._start_row = start_row
+        self._min_board_height_for_double_step = min_board_height_for_double_step
 
     def legal_destinations(self, board: Board, piece: Piece) -> set[Position]:
         from kungfu_chess.model.piece import PieceColor
@@ -73,15 +75,20 @@ class PawnMovement(PieceMovement):
         direction = self._direction if self._direction is not None else (
             -1 if piece.color == PieceColor.WHITE else 1
         )
-        start_row = self._start_row if self._start_row is not None else (
-            board.height - 1 if piece.color == PieceColor.WHITE else 0
-        )
+        start_row = self._start_row if self._start_row is not None else piece.start_row
         result = set()
 
-        # one step forward only — no double step
+        # one step forward
         fwd = Position(r + direction, c)
         if board.in_bounds(fwd) and board.get_piece(fwd) is None:
             result.add(fwd)
+            # double step only if still on start row AND board is large enough
+            fwd2 = Position(r + direction * 2, c)
+            if (r == start_row
+                    and board.height >= self._min_board_height_for_double_step
+                    and board.in_bounds(fwd2)
+                    and board.get_piece(fwd2) is None):
+                result.add(fwd2)
 
         # diagonal capture — only if a piece occupies the target (friendly/enemy filtered by RuleEngine)
         for dc in (-1, 1):

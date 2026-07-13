@@ -34,6 +34,7 @@ class Piece:
     kind: PieceKind
     cell: Position
     state: PieceState = PieceState.IDLE
+    start_row: int = -1  # set by BoardParser; used by PawnMovement for double-step eligibility
 
     @property
     def code(self) -> str:
