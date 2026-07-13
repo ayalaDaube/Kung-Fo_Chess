@@ -51,8 +51,8 @@ class Controller:
 
         # second click inside the board — re-select if clicking own piece
         piece = self._engine.get_piece_at(cell)
-        if piece is not None and self._engine.get_piece_at(self._selected) is not None and \
-                piece.color == self._engine.get_piece_at(self._selected).color:
+        selected_piece = self._engine.get_piece_at(self._selected)
+        if piece is not None and selected_piece is not None and piece.color == selected_piece.color:
             self._selected = cell
             return ControllerResult("selected")
 

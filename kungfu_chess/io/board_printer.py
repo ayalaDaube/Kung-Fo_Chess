@@ -1,5 +1,6 @@
 from kungfu_chess.model.board import Board
 from kungfu_chess.model.piece import PieceState
+from kungfu_chess.model.position import Position
 
 
 class BoardPrinter:
@@ -10,7 +11,6 @@ class BoardPrinter:
         for r in range(board.height):
             row = []
             for c in range(board.width):
-                from kungfu_chess.model.position import Position
                 piece = board.get_piece(Position(r, c))
                 if piece is None or piece.state == PieceState.CAPTURED:
                     row.append(".")

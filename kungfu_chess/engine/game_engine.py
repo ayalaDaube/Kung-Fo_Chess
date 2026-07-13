@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional, Callable
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceKind, PieceColor, PieceState
@@ -12,6 +13,16 @@ from kungfu_chess.realtime.motion import ArrivalEvent
 # Policy types — injectable, no hard-coded logic
 PromotionPolicy = Callable[[Piece, Board], None]  # called on arrival; mutates piece if needed
 GameOverPolicy = Callable[[ArrivalEvent], bool]   # returns True if this event ends the game
+
+
+class MoveReason(Enum):
+    OK                  = "ok"
+    GAME_OVER           = "game_over"
+    MOTION_IN_PROGRESS  = "motion_in_progress"
+    EMPTY_SOURCE        = "empty_source"
+    OUTSIDE_BOARD       = "outside_board"
+    FRIENDLY_DEST       = "friendly_destination"
+    ILLEGAL_PIECE_MOVE  = "illegal_piece_move"
 
 
 def default_promotion_policy(piece: Piece, board: Board) -> None:
@@ -31,7 +42,7 @@ def default_game_over_policy(event: ArrivalEvent) -> bool:
 @dataclass(frozen=True)
 class MoveResult:
     is_accepted: bool
-    reason: str  # "ok" | "game_over" | "motion_in_progress" | reason from RuleEngine
+    reason: MoveReason
 
 
 class GameEngine:
@@ -61,36 +72,40 @@ class GameEngine:
 
     def request_move(self, source: Position, destination: Position) -> MoveResult:
         if self._game_over:
-            return MoveResult(False, "game_over")
+            return MoveResult(False, MoveReason.GAME_OVER)
 
         piece = self._board.get_piece(source)
         if piece is None:
-            return MoveResult(False, "empty_source")
+            return MoveResult(False, MoveReason.EMPTY_SOURCE)
 
         if self._arbiter.has_active_motion(piece):
-            return MoveResult(False, "motion_in_progress")
+            return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
 
         validation = self._rule_engine.validate_move(self._board, source, destination)
         if not validation.is_valid:
-            return MoveResult(False, validation.reason)
+            try:
+                reason = MoveReason(validation.reason)
+            except ValueError:
+                reason = MoveReason.ILLEGAL_PIECE_MOVE
+            return MoveResult(False, reason)
 
         self._arbiter.start_motion(piece, source, destination)
-        return MoveResult(True, "ok")
+        return MoveResult(True, MoveReason.OK)
 
     def request_jump(self, pos: Position) -> MoveResult:
         """Sends a piece airborne (jump mechanic)."""
         if self._game_over:
-            return MoveResult(False, "game_over")
+            return MoveResult(False, MoveReason.GAME_OVER)
 
         piece = self._board.get_piece(pos)
         if piece is None:
-            return MoveResult(False, "empty_source")
+            return MoveResult(False, MoveReason.EMPTY_SOURCE)
 
         if self._arbiter.has_active_motion(piece):
-            return MoveResult(False, "motion_in_progress")
+            return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
 
         self._arbiter.start_jump(piece, pos)
-        return MoveResult(True, "ok")
+        return MoveResult(True, MoveReason.OK)
 
     def wait(self, ms: int) -> None:
         """Advances simulated time through RealTimeArbiter and handles arrival events."""
@@ -99,11 +114,6 @@ class GameEngine:
             self._promotion_policy(event.arriving_piece, self._board)
             if self._game_over_policy(event):
                 self._game_over = True
-
-    def board_string(self) -> str:
-        """Returns a text representation of the current board state."""
-        from kungfu_chess.io.board_printer import BoardPrinter
-        return BoardPrinter().to_string(self._board)
 
     def snapshot(self, cell_size_px: int = 100) -> GameSnapshot:
         """Creates a read-only snapshot for the Renderer."""

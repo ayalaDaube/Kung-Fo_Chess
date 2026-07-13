@@ -21,9 +21,8 @@ class ScriptRunner:
 
     def __init__(self, cell_size: int = None):
         config = load_config()
+        self._config = config
         self._cell_size = cell_size if cell_size is not None else config.cell_size
-        self._ms_per_pixel = config.ms_per_pixel
-        self._jump_duration_ms = config.jump_duration_ms
         self._board_parser = BoardParser()
         self._printer = BoardPrinter()
         self._script_parser = ScriptParser()
@@ -34,6 +33,7 @@ class ScriptRunner:
         """
         commands = self._script_parser.parse(script)
         errors = []
+        board = None
         engine: GameEngine = None
         controller: Controller = None
 
@@ -48,8 +48,8 @@ class ScriptRunner:
                 rule_engine = RuleEngine()
                 arbiter = RealTimeArbiter(
                     board,
-                    ms_per_square=self._cell_size * self._ms_per_pixel,
-                    jump_duration_ms=self._jump_duration_ms,
+                    ms_per_square=self._config.computed_ms_per_square,
+                    jump_duration_ms=self._config.jump_duration_ms,
                 )
                 engine = GameEngine(board, rule_engine, arbiter)
                 mapper = BoardMapper(board.width, board.height, self._cell_size)
@@ -65,7 +65,7 @@ class ScriptRunner:
                 engine.wait(cmd.ms)
 
             elif isinstance(cmd, PrintBoardCommand):
-                actual = engine.board_string()
+                actual = self._printer.to_string(board)
                 print(actual)
                 if cmd.expected_lines:
                     expected = "\n".join(cmd.expected_lines)

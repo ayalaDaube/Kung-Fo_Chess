@@ -5,7 +5,7 @@ from kungfu_chess.model.piece import Piece, PieceColor, PieceKind, PieceState
 from kungfu_chess.model.board import Board
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
-from kungfu_chess.engine.game_engine import GameEngine, MoveResult
+from kungfu_chess.engine.game_engine import GameEngine, MoveResult, MoveReason
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
 from kungfu_chess.io.board_parser import BoardParser
@@ -186,30 +186,25 @@ class TestRealTimeArbiter(unittest.TestCase):
         self.assertEqual(arbiter.ms_per_square, 750)
 
     def test_collision_earlier_mover_loses(self):
-        """Covers lines 112-114: piece arrives at destination while enemy still moving there — arrives first loses."""
+        """Piece arrives at destination while enemy still moving there — the later mover loses."""
         board = parse("wR . bR")
-        # wR: half square at ms_per_square=500 -> 500ms; bR: 1 square -> 1000ms, both heading to (0,1)
         arbiter = RealTimeArbiter(board, ms_per_square=1000)
         wR = board.get_piece(Position(0, 0))
         bR = board.get_piece(Position(0, 2))
-        # manually set different remaining_ms so wR arrives first
-        arbiter.start_motion(wR, Position(0, 0), Position(0, 1))  # 1000ms
-        arbiter.start_motion(bR, Position(0, 2), Position(0, 1))  # 1000ms
-        # force wR to arrive first by reducing its remaining_ms
-        arbiter._active_motions[0].remaining_ms = 500
-        # after 500ms: wR arrives, bR still has 500ms left -> collision branch fires, bR loses
+        arbiter.start_motion(wR, Position(0, 0), Position(0, 1))  # 1 square = 1000ms
+        arbiter.start_motion(bR, Position(0, 2), Position(0, 1))  # 1 square = 1000ms
+        # Give wR a head start via public API — wR has 500ms left, bR still has 1000ms
+        arbiter.get_motion_for(wR).set_remaining_ms(500)
+        # advance 500ms: wR arrives (0ms left), bR still has 500ms — bR loses
         arbiter.advance_time(500)
         self.assertEqual(bR.state, PieceState.CAPTURED)
 
     def test_pawn_promotion_to_queen(self):
-        """Covers line 137: white pawn reaching row 0 becomes a queen."""
-        board = parse("wP .\n. .")
-        # place wP at row 1, move to row 0
-        board2 = parse(". .\nwP .")
-        arbiter = RealTimeArbiter(board2, ms_per_square=1000)
-        pawn = board2.get_piece(Position(1, 0))
-        arbiter.start_motion(pawn, Position(1, 0), Position(0, 0))
-        arbiter.advance_time(1000)
+        """White pawn reaching row 0 becomes a queen via GameEngine promotion policy."""
+        engine, board = make_engine(". .\nwP .", ms_per_square=1000)
+        engine.request_move(Position(1, 0), Position(0, 0))
+        engine.wait(1000)
+        pawn = board.get_piece(Position(0, 0))
         self.assertEqual(pawn.kind, PieceKind.QUEEN)
 
 
@@ -221,7 +216,7 @@ class TestGameEngine(unittest.TestCase):
         engine, _ = make_engine("wR . .\n. . .\n. . .")
         result = engine.request_move(Position(0, 0), Position(0, 2))
         self.assertTrue(result.is_accepted)
-        self.assertEqual(result.reason, "ok")
+        self.assertEqual(result.reason, MoveReason.OK)
 
     def test_invalid_move_rejected(self):
         engine, _ = make_engine("wR . .\n. . .\n. . .")
@@ -232,14 +227,14 @@ class TestGameEngine(unittest.TestCase):
         engine, _ = make_engine("wR . .")
         result = engine.request_move(Position(0, 1), Position(0, 2))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "empty_source")
+        self.assertEqual(result.reason, MoveReason.EMPTY_SOURCE)
 
     def test_motion_in_progress_blocks_second_move(self):
         engine, _ = make_engine("wR . .\n. . .\n. . .")
         engine.request_move(Position(0, 0), Position(0, 2))
         result = engine.request_move(Position(0, 0), Position(0, 1))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "motion_in_progress")
+        self.assertEqual(result.reason, MoveReason.MOTION_IN_PROGRESS)
 
     def test_game_over_blocks_moves(self):
         engine, _ = make_engine("wR . bK\n. . .\n. . .")
@@ -248,7 +243,7 @@ class TestGameEngine(unittest.TestCase):
         self.assertTrue(engine.game_over)
         result = engine.request_move(Position(0, 2), Position(0, 0))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "game_over")
+        self.assertEqual(result.reason, MoveReason.GAME_OVER)
 
     def test_game_over_blocks_jump(self):
         engine, _ = make_engine("wR . bK\n. . .\n. . .")
@@ -256,20 +251,20 @@ class TestGameEngine(unittest.TestCase):
         engine.wait(2000)
         result = engine.request_jump(Position(0, 2))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "game_over")
+        self.assertEqual(result.reason, MoveReason.GAME_OVER)
 
     def test_jump_empty_source_rejected(self):
         engine, _ = make_engine("wK . .")
         result = engine.request_jump(Position(0, 1))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "empty_source")
+        self.assertEqual(result.reason, MoveReason.EMPTY_SOURCE)
 
     def test_jump_motion_in_progress_blocked(self):
         engine, _ = make_engine("wK . .")
         engine.request_jump(Position(0, 0))
         result = engine.request_jump(Position(0, 0))
         self.assertFalse(result.is_accepted)
-        self.assertEqual(result.reason, "motion_in_progress")
+        self.assertEqual(result.reason, MoveReason.MOTION_IN_PROGRESS)
 
     def test_wait_delegates_to_arbiter(self):
         engine, board = make_engine("wR . .")
@@ -321,10 +316,11 @@ class TestGameEngine(unittest.TestCase):
 
     def test_snapshot_zero_distance_motion(self):
         """Covers the `else 1.0` branch in snapshot when total_ms == 0 (same-cell motion)."""
-        engine, board = make_engine("wR .", ms_per_square=1000)
+        board = parse("wR .", )
+        arbiter = RealTimeArbiter(board, ms_per_square=1000)
         piece = board.get_piece(Position(0, 0))
-        # Manually inject a motion with to_pos == from_pos so total_ms == 0
-        engine._arbiter.start_motion(piece, Position(0, 0), Position(0, 0))
+        arbiter.start_motion(piece, Position(0, 0), Position(0, 0))
+        engine = GameEngine(board, RuleEngine(), arbiter)
         snap = engine.snapshot(cell_size_px=100)
         self.assertEqual(snap.pieces[0].pixel_x, 0)
         self.assertEqual(snap.pieces[0].pixel_y, 0)
@@ -360,8 +356,8 @@ class FakeEngine:
 
     def __init__(self, piece_at: dict = None, move_accepted: bool = True, jump_accepted: bool = True):
         self._piece_at = piece_at or {}  # Position -> Piece or None
-        self._move_result = MoveResult(move_accepted, "ok" if move_accepted else "illegal_piece_move")
-        self._jump_result = MoveResult(jump_accepted, "ok" if jump_accepted else "motion_in_progress")
+        self._move_result = MoveResult(move_accepted, MoveReason.OK if move_accepted else MoveReason.ILLEGAL_PIECE_MOVE)
+        self._jump_result = MoveResult(jump_accepted, MoveReason.OK if jump_accepted else MoveReason.MOTION_IN_PROGRESS)
         self.move_calls = []   # records (source, destination)
         self.jump_calls = []   # records pos
 

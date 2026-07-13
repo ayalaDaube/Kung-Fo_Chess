@@ -24,6 +24,10 @@ class Motion:
     remaining_ms: int
     to_pos: Optional[Position] = None  # None for JUMP
 
+    def set_remaining_ms(self, ms: int) -> None:
+        """Allows tests and external code to adjust remaining time without accessing private fields."""
+        self.remaining_ms = ms
+
 
 @dataclass(frozen=True)
 class ArrivalEvent:

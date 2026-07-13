@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.board import Board
-from kungfu_chess.model.piece import Piece
+from kungfu_chess.model.piece import Piece, PieceColor
 
 
 class PieceMovement(ABC):
@@ -70,7 +70,6 @@ class PawnMovement(PieceMovement):
         self._min_board_height_for_double_step = min_board_height_for_double_step
 
     def legal_destinations(self, board: Board, piece: Piece) -> set[Position]:
-        from kungfu_chess.model.piece import PieceColor
         r, c = piece.cell.row, piece.cell.col
         direction = self._direction if self._direction is not None else (
             -1 if piece.color == PieceColor.WHITE else 1

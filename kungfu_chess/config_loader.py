@@ -12,6 +12,11 @@ class GameConfig:
     jump_duration_ms: int
     cell_size: int
 
+    @property
+    def computed_ms_per_square(self) -> int:
+        """ms_per_square derived from cell_size * ms_per_pixel (used when ms_per_square not set explicitly)."""
+        return self.cell_size * self.ms_per_pixel
+
 
 def load_config(path: str = _CONFIG_PATH) -> GameConfig:
     """Loads game configuration from a JSON file. Falls back to defaults if file is missing."""
