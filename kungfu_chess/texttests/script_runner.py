@@ -1,3 +1,4 @@
+from __future__ import annotations
 from kungfu_chess.io.board_parser import BoardParser
 from kungfu_chess.io.board_printer import BoardPrinter
 from kungfu_chess.rules.rule_engine import RuleEngine
@@ -38,7 +39,12 @@ class ScriptRunner:
 
         for cmd in commands:
             if isinstance(cmd, BoardCommand):
-                board = self._board_parser.parse("\n".join(cmd.lines))
+                try:
+                    board = self._board_parser.parse("\n".join(cmd.lines))
+                except ValueError as e:
+                    msg = str(e).split(":")[0]
+                    errors.append(f"ERROR {msg}")
+                    break
                 rule_engine = RuleEngine()
                 arbiter = RealTimeArbiter(
                     board,
@@ -60,8 +66,10 @@ class ScriptRunner:
 
             elif isinstance(cmd, PrintBoardCommand):
                 actual = self._printer.to_string(engine._board)
-                expected = "\n".join(cmd.expected_lines)
-                if actual != expected:
-                    errors.append(f"MISMATCH:\nExpected:\n{expected}\nActual:\n{actual}")
+                print(actual)
+                if cmd.expected_lines:
+                    expected = "\n".join(cmd.expected_lines)
+                    if actual != expected:
+                        errors.append(f"MISMATCH:\nExpected:\n{expected}\nActual:\n{actual}")
 
         return errors

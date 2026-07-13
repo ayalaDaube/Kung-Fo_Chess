@@ -1,3 +1,4 @@
+from __future__ import annotations
 import unittest
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceColor, PieceKind, PieceState
@@ -291,6 +292,16 @@ class TestGameEngine(unittest.TestCase):
         snap = engine.snapshot()
         self.assertEqual(snap.airborne_pos, Position(0, 0))
 
+    def test_snapshot_zero_distance_motion(self):
+        """Covers the `else 1.0` branch in snapshot when total_ms == 0 (same-cell motion)."""
+        engine, board = make_engine("wR .", ms_per_square=1000)
+        piece = board.get_piece(Position(0, 0))
+        # Manually inject a motion with to_pos == from_pos so total_ms == 0
+        engine._arbiter.start_motion(piece, Position(0, 0), Position(0, 0))
+        snap = engine.snapshot(cell_size_px=100)
+        self.assertEqual(snap.pieces[0].pixel_x, 0)
+        self.assertEqual(snap.pieces[0].pixel_y, 0)
+
 
 # ── BoardMapper ───────────────────────────────────────────────────────────────
 
@@ -405,6 +416,16 @@ class TestController(unittest.TestCase):
         self.assertEqual(result.action, "ignored")
         self.assertEqual(engine.jump_calls, [])
 
+    def test_second_click_reselects_same_color_piece(self):
+        """Covers lines 56-57: second click on a friendly piece re-selects it."""
+        p1 = Piece("p1", PieceColor.WHITE, PieceKind.ROOK, Position(0, 0))
+        p2 = Piece("p2", PieceColor.WHITE, PieceKind.ROOK, Position(0, 1))
+        ctrl, _ = self._ctrl(cols=3, rows=1, piece_at={Position(0, 0): p1, Position(0, 1): p2})
+        ctrl.click(50, 50)   # select p1
+        result = ctrl.click(150, 50)  # click on p2 (same color)
+        self.assertEqual(result.action, "selected")
+        self.assertEqual(ctrl.selected_cell, Position(0, 1))
+
 
 # ── BoardParser / BoardPrinter ────────────────────────────────────────────────
 
@@ -449,6 +470,19 @@ class TestBoardEdgeCases(unittest.TestCase):
         board = Board(3, 3)
         result = board.remove_piece(Position(0, 0))
         self.assertIsNone(result)
+
+
+# ── ConfigLoader ──────────────────────────────────────────────────────────────
+
+class TestConfigLoader(unittest.TestCase):
+
+    def test_missing_file_uses_defaults(self):
+        from kungfu_chess.config_loader import load_config
+        config = load_config(path="nonexistent_file.json")
+        self.assertEqual(config.ms_per_pixel, 10)
+        self.assertEqual(config.ms_per_square, 1000)
+        self.assertEqual(config.jump_duration_ms, 1000)
+        self.assertEqual(config.cell_size, 100)
 
 
 if __name__ == "__main__":

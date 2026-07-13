@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Union
 
@@ -37,7 +38,7 @@ class ScriptParser:
         i = 0
         while i < len(lines):
             line = lines[i].strip()
-            if line == "Board":
+            if line in ("Board", "Board:"):
                 board_lines, i = self._read_block(lines, i + 1)
                 commands.append(BoardCommand(lines=board_lines))
             elif line.startswith("click "):
@@ -54,6 +55,8 @@ class ScriptParser:
             elif line == "print board":
                 expected_lines, i = self._read_block(lines, i + 1)
                 commands.append(PrintBoardCommand(expected_lines=expected_lines))
+            elif line in ("Commands", "Commands:"):
+                i += 1
             else:
                 i += 1
         return commands
@@ -64,8 +67,9 @@ class ScriptParser:
         i = start
         while i < len(lines):
             stripped = lines[i].strip()
-            if stripped == "" or stripped in ("print board", "Board") or \
+            if stripped == "" or stripped in ("print board", "Board", "Board:", "Commands", "Commands:") or \
                stripped.startswith(("click ", "jump ", "wait ")):
+
                 break
             result.append(stripped)
             i += 1

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 from kungfu_chess.model.position import Position
@@ -48,7 +49,13 @@ class Controller:
             self._selected = cell
             return ControllerResult("selected")
 
-        # second click inside the board
+        # second click inside the board — re-select if clicking own piece
+        piece = self._engine.get_piece_at(cell)
+        if piece is not None and self._engine.get_piece_at(self._selected) is not None and \
+                piece.color == self._engine.get_piece_at(self._selected).color:
+            self._selected = cell
+            return ControllerResult("selected")
+
         source = self._selected
         self._selected = None
         result = self._engine.request_move(source, cell)

@@ -10,9 +10,8 @@ def main():
     script = sys.stdin.read()
     runner = ScriptRunner()
     errors = runner.run(script)
-    if errors:
-        for e in errors:
-            print(e)
+    for e in errors:
+        print(e)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceColor, PieceKind, PieceState
 from kungfu_chess.model.board import Board

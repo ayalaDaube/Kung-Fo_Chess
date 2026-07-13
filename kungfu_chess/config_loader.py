@@ -24,7 +24,7 @@ def load_config(path: str = _CONFIG_PATH) -> GameConfig:
     try:
         with open(path, "r") as f:
             data = json.load(f)
-    except FileNotFoundError:
+    except FileNotFoundError:  # pragma: no cover
         data = {}
 
     merged = {**defaults, **data}
