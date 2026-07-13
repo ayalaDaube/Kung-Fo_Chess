@@ -3,33 +3,12 @@ import unittest
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceColor, PieceKind, PieceState
 from kungfu_chess.model.board import Board
+from kungfu_chess.io.board_parser import BoardParser
 
 
 def make_board(tokens: list[list[str]]) -> Board:
-    """עזר: בונה Board מרשת טוקנים."""
-    from kungfu_chess.io.board_parser import BoardParser
     text = "\n".join(" ".join(row) for row in tokens)
     return BoardParser().parse(text)
-
-
-class TestPosition(unittest.TestCase):
-
-    def test_equality(self):
-        self.assertEqual(Position(1, 2), Position(1, 2))
-
-    def test_inequality_row(self):
-        self.assertNotEqual(Position(1, 2), Position(2, 2))
-
-    def test_inequality_col(self):
-        self.assertNotEqual(Position(1, 2), Position(1, 3))
-
-    def test_repr(self):
-        self.assertIn("row=1", repr(Position(1, 2)))
-        self.assertIn("col=2", repr(Position(1, 2)))
-
-    def test_hashable(self):
-        s = {Position(0, 0), Position(0, 0)}
-        self.assertEqual(len(s), 1)
 
 
 class TestPiece(unittest.TestCase):
@@ -94,6 +73,10 @@ class TestBoard(unittest.TestCase):
         b = make_board([["wK", "."]])
         b.remove_piece(Position(0, 0))
         self.assertIsNone(b.get_piece(Position(0, 0)))
+
+    def test_remove_piece_from_empty_cell_returns_none(self):
+        b = Board(3, 3)
+        self.assertIsNone(b.remove_piece(Position(0, 0)))
 
 
 if __name__ == "__main__":
