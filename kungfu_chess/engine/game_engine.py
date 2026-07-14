@@ -5,14 +5,13 @@ from typing import Optional, Callable
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceKind, PieceColor, PieceState
 from kungfu_chess.model.board import Board
-from kungfu_chess.model.game_state import GameSnapshot, PieceSnapshot
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
-from kungfu_chess.realtime.motion import ArrivalEvent
+from kungfu_chess.realtime.motion import ArrivalEvent, EliminationEvent
 
 # Policy types — injectable, no hard-coded logic
 PromotionPolicy = Callable[[Piece, Board], None]  # called on arrival; mutates piece if needed
-GameOverPolicy = Callable[[ArrivalEvent], bool]   # returns True if this event ends the game
+GameOverPolicy = Callable[[Piece], bool]           # returns True if this captured piece ends the game
 
 
 class MoveReason(Enum):
@@ -34,9 +33,9 @@ def default_promotion_policy(piece: Piece, board: Board) -> None:
         piece.kind = PieceKind.QUEEN
 
 
-def default_game_over_policy(event: ArrivalEvent) -> bool:
+def default_game_over_policy(captured: Piece) -> bool:
     """Game ends when a king is captured."""
-    return event.captured_piece is not None and event.captured_piece.kind == PieceKind.KING
+    return captured.kind == PieceKind.KING
 
 
 @dataclass(frozen=True)
@@ -48,7 +47,8 @@ class MoveResult:
 class GameEngine:
     """
     Application Service: coordinates Board, RuleEngine, and RealTimeArbiter.
-    Tracks game-over condition. Contains no piece-specific movement logic.
+    Applies board mutations from RealTimeEvents. Tracks game-over condition.
+    Contains no piece-specific movement logic.
     """
 
     def __init__(self, board: Board, rule_engine: RuleEngine, arbiter: RealTimeArbiter,
@@ -107,50 +107,21 @@ class GameEngine:
         self._arbiter.start_jump(piece, pos)
         return MoveResult(True, MoveReason.OK)
 
+    def _apply_elimination(self, event: EliminationEvent) -> None:
+        self._board.remove_piece(event.current_pos)
+        if self._game_over_policy(event.piece):
+            self._game_over = True
+
+    def _apply_arrival(self, event: ArrivalEvent) -> None:
+        captured = self._board.move_piece(event.from_pos, event.destination)
+        self._promotion_policy(event.arriving_piece, self._board)
+        if captured is not None and self._game_over_policy(captured):
+            self._game_over = True
+
     def wait(self, ms: int) -> None:
-        """Advances simulated time through RealTimeArbiter and handles arrival events."""
-        events = self._arbiter.advance_time(ms)
-        for event in events:
-            self._promotion_policy(event.arriving_piece, self._board)
-            if self._game_over_policy(event):
-                self._game_over = True
-
-    def snapshot(self, cell_size_px: int = 100) -> GameSnapshot:
-        """Creates a read-only snapshot for the Renderer."""
-        pieces_data = []
-        for piece in self._board.all_pieces():
-            if piece.state == PieceState.CAPTURED:
-                continue
-            motion = self._arbiter.get_motion_for(piece)
-            if motion is not None and motion.to_pos is not None:
-                # interpolation: pixel position between source and destination
-                total_ms = (max(
-                    abs(motion.to_pos.row - motion.from_pos.row),
-                    abs(motion.to_pos.col - motion.from_pos.col),
-                ) * self._arbiter.ms_per_square)
-                elapsed = total_ms - motion.remaining_ms
-                t = min(elapsed / total_ms, 1.0) if total_ms > 0 else 1.0
-                px = (motion.from_pos.col + t * (motion.to_pos.col - motion.from_pos.col)) * cell_size_px
-                py = (motion.from_pos.row + t * (motion.to_pos.row - motion.from_pos.row)) * cell_size_px
-            else:
-                px = piece.cell.col * cell_size_px
-                py = piece.cell.row * cell_size_px
-
-            pieces_data.append(PieceSnapshot(
-                id=piece.id,
-                kind=piece.kind,
-                color=piece.color,
-                cell=piece.cell,
-                state=piece.state,
-                pixel_x=px,
-                pixel_y=py,
-            ))
-
-        return GameSnapshot(
-            board_width=self._board.width,
-            board_height=self._board.height,
-            pieces=pieces_data,
-            selected_cell=self._selected_cell,
-            game_over=self._game_over,
-            airborne_pos=self._arbiter.airborne_position(),
-        )
+        """Advances simulated time and applies all resulting board changes."""
+        for event in self._arbiter.advance_time(ms):
+            if isinstance(event, EliminationEvent):
+                self._apply_elimination(event)
+            elif isinstance(event, ArrivalEvent):
+                self._apply_arrival(event)

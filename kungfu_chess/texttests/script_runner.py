@@ -47,7 +47,6 @@ class ScriptRunner:
                     break
                 rule_engine = RuleEngine()
                 arbiter = RealTimeArbiter(
-                    board,
                     ms_per_square=self._config.computed_ms_per_square,
                     jump_duration_ms=self._config.jump_duration_ms,
                 )

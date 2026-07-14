@@ -30,11 +30,21 @@ class Motion:
 
 
 @dataclass(frozen=True)
+class EliminationEvent:
+    """
+    Reported when a piece is eliminated mid-motion (collision or air-capture),
+    before reaching its destination. GameEngine removes it from the board.
+    """
+    piece: Piece
+    current_pos: Position
+
+
+@dataclass(frozen=True)
 class ArrivalEvent:
     """
     Arrival event reported from RealTimeArbiter to GameEngine.
-    GameEngine is responsible for checking if captured_piece is a king.
+    GameEngine is responsible for moving the piece on the board and checking game-over.
     """
     arriving_piece: Piece
+    from_pos: Position
     destination: Position
-    captured_piece: Optional[Piece]  # None if no piece was captured

@@ -1,22 +1,19 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Union
 from kungfu_chess.model.position import Position
-from kungfu_chess.model.piece import Piece, PieceKind, PieceState
-from kungfu_chess.model.board import Board
-from kungfu_chess.realtime.motion import Motion, MotionType, ArrivalEvent
+from kungfu_chess.model.piece import Piece, PieceState
+from kungfu_chess.realtime.motion import Motion, MotionType, ArrivalEvent, EliminationEvent
+
+RealTimeEvent = Union[ArrivalEvent, EliminationEvent]
 
 
 class RealTimeArbiter:
     """
-    Responsible for managing everything that happens in real time outside the logical board.
-    - Holds a collection of active Motions (move and jump).
-    - Advances simulated time and resolves arrivals.
-    - Manages airborne state for air-capture.
-    Has no knowledge of chess rules, game_over, or rendering.
+    Manages active motions and simulated time. Has no knowledge of the Board.
+    Reports ArrivalEvent and EliminationEvent — GameEngine applies them to the Board.
     """
 
-    def __init__(self, board: Board, ms_per_square: int = 500, jump_duration_ms: int = 1000):
-        self._board = board
+    def __init__(self, ms_per_square: int = 500, jump_duration_ms: int = 1000):
         self._ms_per_square = ms_per_square
         self._jump_duration_ms = jump_duration_ms
         self._active_motions: list[Motion] = []
@@ -33,7 +30,7 @@ class RealTimeArbiter:
         """Returns the position of the piece currently airborne (jump), or None."""
         return self._airborne_pos
 
-    def get_motion_for(self, piece: Piece) -> Optional["Motion"]:
+    def get_motion_for(self, piece: Piece) -> Optional[Motion]:
         """Returns the active Motion for the given piece, or None."""
         for m in self._active_motions:
             if m.piece is piece:
@@ -72,10 +69,34 @@ class RealTimeArbiter:
         ))
         self._airborne_pos = pos
 
-    def advance_time(self, ms: int) -> list[ArrivalEvent]:
+    def _eliminate_simultaneous_collisions(self, arrived: list[Motion]) -> tuple[list[Motion], list[EliminationEvent]]:
         """
-        Advances simulated time. Returns a list of ArrivalEvents.
-        GameEngine is responsible for interpreting the events (e.g. whether a king was captured).
+        Simultaneous collision: two enemy MOVE motions crossing paths.
+        Case 1: both heading to the same destination.
+        Case 2: heading to each other's source (head-on swap).
+        The one started first (earlier index) wins — the other is eliminated.
+        """
+        eliminated_ids = set()
+        events = []
+        for i, m1 in enumerate(arrived):
+            if id(m1) in eliminated_ids or m1.motion_type != MotionType.MOVE:
+                continue
+            for m2 in arrived[i + 1:]:
+                if (id(m2) not in eliminated_ids
+                        and m2.motion_type == MotionType.MOVE
+                        and m2.piece.color != m1.piece.color
+                        and (m2.to_pos == m1.to_pos
+                             or (m1.to_pos == m2.from_pos and m2.to_pos == m1.from_pos))):
+                    m2.piece.state = PieceState.CAPTURED
+                    eliminated_ids.add(id(m2))
+                    events.append(EliminationEvent(piece=m2.piece, current_pos=m2.from_pos))
+        survived = [m for m in arrived if id(m) not in eliminated_ids]
+        return survived, events
+
+    def advance_time(self, ms: int) -> list[RealTimeEvent]:
+        """
+        Advances simulated time. Returns a list of RealTimeEvents (ArrivalEvent / EliminationEvent).
+        GameEngine is responsible for applying them to the Board.
         """
         if not self._active_motions:
             return []
@@ -86,72 +107,72 @@ class RealTimeArbiter:
         arrived = [m for m in self._active_motions if m.remaining_ms <= 0]
         self._active_motions = [m for m in self._active_motions if m.remaining_ms > 0]
 
-        # simultaneous collision: two enemy MOVE motions crossing paths
-        # case 1: both heading to the same destination
-        # case 2: heading to each other's source (head-on swap)
-        # the one started first (earlier index) wins — the other is eliminated
-        eliminated_ids = set()
-        for i, m1 in enumerate(arrived):
-            if id(m1) in eliminated_ids or m1.motion_type != MotionType.MOVE:
-                continue
-            for m2 in arrived[i + 1:]:
-                if (id(m2) not in eliminated_ids
-                        and m2.motion_type == MotionType.MOVE
-                        and m2.piece.color != m1.piece.color
-                        and (m2.to_pos == m1.to_pos
-                             or (m1.to_pos == m2.from_pos and m2.to_pos == m1.from_pos))):
-                    self._board.remove_piece(m2.from_pos)
-                    m2.piece.state = PieceState.CAPTURED
-                    eliminated_ids.add(id(m2))
-        arrived = [m for m in arrived if id(m) not in eliminated_ids]
+        arrived, elimination_events = self._eliminate_simultaneous_collisions(arrived)
 
         # Resolve MOVE before JUMP so air-capture is checked while the piece is still airborne
         arrived.sort(key=lambda m: 0 if m.motion_type == MotionType.MOVE else 1)
 
-        events = []
+        events: list[RealTimeEvent] = list(elimination_events)
         for motion in arrived:
             events.extend(self._resolve_arrival(motion))
         return events
 
-    # ── private ───────────────────────────────────────────────────────────────
-
-    def _resolve_arrival(self, motion: Motion) -> list[ArrivalEvent]:
-        if motion.motion_type == MotionType.JUMP:
-            motion.piece.state = PieceState.IDLE
-            self._airborne_pos = None
-            return []  # jump ends on the same cell — no arrival event
-
-        # collision: if another MOVE motion is heading to the same destination,
-        # the one that started LATER (still moving) loses — the one that arrived first wins
+    def _resolve_late_collision(self, motion: Motion) -> list[EliminationEvent]:
+        """
+        Collision: if another MOVE motion is heading to the same destination,
+        the one that started LATER (still moving) loses — the one that arrived first wins.
+        """
+        events = []
         for other in list(self._active_motions):
             if (other.motion_type == MotionType.MOVE
                     and other.to_pos == motion.to_pos
                     and other.piece.color != motion.piece.color):
-                # motion arrived first; other is still moving — other loses
-                self._board.remove_piece(other.from_pos)
                 other.piece.state = PieceState.CAPTURED
                 self._active_motions.remove(other)
+                events.append(EliminationEvent(piece=other.piece, current_pos=other.from_pos))
+        return events
 
-        # air-capture: check before board.move_piece
-        # if the arriving piece reaches the cell of an airborne enemy — the arriving piece is eliminated
-        if self._airborne_pos == motion.to_pos:
-            airborne_piece = self._board.get_piece(motion.to_pos)
-            arriving_piece = self._board.get_piece(motion.from_pos)
-            if (airborne_piece is not None
-                    and arriving_piece is not None
-                    and airborne_piece.color != arriving_piece.color):
-                self._board.remove_piece(motion.from_pos)
-                motion.piece.state = PieceState.CAPTURED
-                self._airborne_pos = None
-                return []
+    def _resolve_air_capture(self, motion: Motion) -> Optional[EliminationEvent]:
+        """
+        Air-capture: if the arriving piece reaches the cell of an airborne enemy — the arriving piece is eliminated.
+        Returns an EliminationEvent if eliminated, otherwise None.
+        """
+        if self._airborne_pos != motion.to_pos:
+            return None
+        airborne_color = self._get_airborne_piece_color(motion)
+        if airborne_color is not None and motion.piece.color != airborne_color:
+            motion.piece.state = PieceState.CAPTURED
+            self._airborne_pos = None
+            return EliminationEvent(piece=motion.piece, current_pos=motion.from_pos)
+        return None
 
-        # regular MOVE: atomic execution — remove from source, capture, place at destination
-        captured = self._board.move_piece(motion.from_pos, motion.to_pos)
+    def _get_airborne_piece_color(self, motion: Motion):
+        """Returns the color of the airborne piece at motion.to_pos, by finding its motion."""
+        for m in self._active_motions:
+            if m.motion_type == MotionType.JUMP and m.from_pos == motion.to_pos:
+                return m.piece.color
+        return None
+
+    def _resolve_move(self, motion: Motion) -> list[ArrivalEvent]:
+        """Regular MOVE: reports arrival — GameEngine will move the piece on the board."""
         motion.piece.state = PieceState.IDLE
         self._airborne_pos = None
-
         return [ArrivalEvent(
             arriving_piece=motion.piece,
+            from_pos=motion.from_pos,
             destination=motion.to_pos,
-            captured_piece=captured,
         )]
+
+    def _resolve_arrival(self, motion: Motion) -> list[RealTimeEvent]:
+        if motion.motion_type == MotionType.JUMP:
+            motion.piece.state = PieceState.IDLE
+            self._airborne_pos = None
+            return []
+
+        events: list[RealTimeEvent] = self._resolve_late_collision(motion)
+
+        elimination = self._resolve_air_capture(motion)
+        if elimination:
+            return events + [elimination]
+
+        return events + self._resolve_move(motion)
