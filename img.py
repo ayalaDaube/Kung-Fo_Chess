@@ -72,10 +72,10 @@ class Img:
         roi = other_img.img[y:y + h, x:x + w]
 
         if self.img.shape[2] == 4:
-            b, g, r, a = cv2.split(self.img)
-            mask = a / 255.0
-            for c in range(3):
-                roi[..., c] = (1 - mask) * roi[..., c] + mask * self.img[..., c]
+            alpha = self.img[..., 3:4].astype(np.float32) / 255.0
+            src   = self.img[..., :3].astype(np.float32)
+            dst   = roi[..., :3].astype(np.float32)
+            roi[..., :3] = (src * alpha + dst * (1 - alpha)).astype(np.uint8)
         else:
             other_img.img[y:y + h, x:x + w] = self.img
 

@@ -44,10 +44,13 @@ class ArrivalEvent:
     """
     Arrival event reported from RealTimeArbiter to GameEngine.
     GameEngine is responsible for moving the piece on the board and checking game-over.
+    captured_piece and pre_promotion_kind are set by GameEngine after applying the move.
     """
     arriving_piece: Piece
     from_pos: Position
     destination: Position
+    captured_piece: Optional[Piece] = None
+    pre_promotion_kind: Optional[object] = None  # PieceKind before promotion, for notation
 
 
 @dataclass(frozen=True)

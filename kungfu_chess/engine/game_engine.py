@@ -78,7 +78,7 @@ class GameEngine:
         if piece is None:
             return MoveResult(False, MoveReason.EMPTY_SOURCE)
 
-        if self._arbiter.has_active_motion(piece):
+        if self._arbiter.has_active_motion(piece) or piece.state in (PieceState.LONG_REST, PieceState.SHORT_REST):
             return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
 
         validation = self._rule_engine.validate_move(self._board, source, destination)
@@ -101,7 +101,7 @@ class GameEngine:
         if piece is None:
             return MoveResult(False, MoveReason.EMPTY_SOURCE)
 
-        if self._arbiter.has_active_motion(piece):
+        if self._arbiter.has_active_motion(piece) or piece.state in (PieceState.LONG_REST, PieceState.SHORT_REST):
             return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
 
         self._arbiter.start_jump(piece, pos)
@@ -112,11 +112,21 @@ class GameEngine:
         if self._game_over_policy(event.piece):
             self._game_over = True
 
-    def _apply_arrival(self, event: ArrivalEvent) -> None:
+    def _apply_arrival(self, event: ArrivalEvent) -> ArrivalEvent:
+        # pre_promotion_kind must be captured before calling promotion_policy,
+        # because promotion_policy mutates arriving_piece.kind in-place.
+        kind_before_promotion = event.arriving_piece.kind
         captured = self._board.move_piece(event.from_pos, event.destination)
         self._promotion_policy(event.arriving_piece, self._board)
         if captured is not None and self._game_over_policy(captured):
             self._game_over = True
+        return ArrivalEvent(
+            arriving_piece=event.arriving_piece,
+            from_pos=event.from_pos,
+            destination=event.destination,
+            captured_piece=captured,
+            pre_promotion_kind=kind_before_promotion,
+        )
 
     def _apply_rest(self, event: RestEvent) -> None:
         event.piece.state = event.rest_state
@@ -124,14 +134,20 @@ class GameEngine:
     def _apply_idle(self, event: IdleEvent) -> None:
         event.piece.state = PieceState.IDLE
 
-    def wait(self, ms: int) -> None:
-        """Advances simulated time and applies all resulting board changes."""
-        for event in self._arbiter.advance_time(ms):
+    def wait(self, ms: int) -> list:
+        """Advances simulated time, applies all resulting board changes, and returns the events."""
+        raw_events = self._arbiter.advance_time(ms)
+        result = []
+        for event in raw_events:
             if isinstance(event, EliminationEvent):
                 self._apply_elimination(event)
+                result.append(event)
             elif isinstance(event, ArrivalEvent):
-                self._apply_arrival(event)
+                result.append(self._apply_arrival(event))
             elif isinstance(event, RestEvent):
                 self._apply_rest(event)
+                result.append(event)
             elif isinstance(event, IdleEvent):
                 self._apply_idle(event)
+                result.append(event)
+        return result

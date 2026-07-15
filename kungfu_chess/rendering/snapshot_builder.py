@@ -5,6 +5,7 @@ from kungfu_chess.model.game_state import GameSnapshot, PieceSnapshot
 from kungfu_chess.model.piece import PieceState
 from kungfu_chess.model.position import Position
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
+from kungfu_chess.rendering.game_stats_tracker import GameStatsTracker
 
 
 def _piece_pixel_position(piece, arbiter: RealTimeArbiter, cell_size_px: int) -> tuple[float, float]:
@@ -25,7 +26,8 @@ def _piece_pixel_position(piece, arbiter: RealTimeArbiter, cell_size_px: int) ->
 
 
 def build_snapshot(board: Board, arbiter: RealTimeArbiter, cell_size_px: int,
-                   selected_cell: Optional[Position], game_over: bool) -> GameSnapshot:
+                   selected_cell: Optional[Position], game_over: bool,
+                   stats: Optional[GameStatsTracker] = None) -> GameSnapshot:
     """Builds a read-only GameSnapshot DTO for the Renderer, with pixel-interpolated piece positions."""
     pieces_data = []
     for piece in board.all_pieces():
@@ -49,4 +51,6 @@ def build_snapshot(board: Board, arbiter: RealTimeArbiter, cell_size_px: int,
         selected_cell=selected_cell,
         game_over=game_over,
         airborne_pos=arbiter.airborne_position(),
+        scores=stats.scores if stats else {},
+        move_history=stats.move_history if stats else [],
     )

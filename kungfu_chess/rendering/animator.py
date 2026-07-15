@@ -24,7 +24,7 @@ def _load_config(kind: PieceKind, color: PieceColor, state: PieceState) -> dict:
     path = _ASSETS_ROOT / f"{kind.value}{color_char}" / "states" / _state_dir(state) / "config.json"
     if not path.exists():
         return {"graphics": {"frames_per_sec": 6, "is_loop": True}}
-    with open(path) as f:
+    with open(path, 'rb') as f:
         return json.load(f)
 
 
@@ -77,15 +77,13 @@ class Animator:
         )
 
     def get_rest_progress(self, piece_id: str, kind: PieceKind,
-                          color: PieceColor, state: PieceState) -> float:
+                          color: PieceColor, state: PieceState,
+                          rest_duration_ms: float) -> float:
         """
-        Returns how far along the rest animation is: 0.0 (just started) → 1.0 (done).
-        Only meaningful when state is LONG_REST or SHORT_REST.
+        Returns how far along the rest is: 0.0 (just started) -> 1.0 (done).
+        rest_duration_ms: the actual rest duration from config (long_rest_ms or short_rest_ms).
         """
         if state not in _REST_STATES:
             return 0.0
-        config = _load_config(kind, color, state)
-        fps = config["graphics"]["frames_per_sec"]
-        total_ms = (_FRAME_COUNT / fps) * 1000.0
         elapsed_ms = self._elapsed_ms - self._start.get(piece_id, self._elapsed_ms)
-        return min(elapsed_ms / total_ms, 1.0)
+        return min(elapsed_ms / rest_duration_ms, 1.0)

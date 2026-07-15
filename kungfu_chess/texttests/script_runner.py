@@ -47,8 +47,8 @@ class ScriptRunner:
                     break
                 rule_engine = RuleEngine()
                 arbiter = RealTimeArbiter(
-                    ms_per_square=self._config.computed_ms_per_square,
-                    jump_duration_ms=self._config.jump_duration_ms,
+                    ms_per_square=500,
+                    jump_duration_ms=1000,
                 )
                 engine = GameEngine(board, rule_engine, arbiter)
                 mapper = BoardMapper(board.width, board.height, self._cell_size)

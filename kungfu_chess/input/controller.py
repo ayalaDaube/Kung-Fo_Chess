@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 from kungfu_chess.model.position import Position
+from kungfu_chess.model.piece import PieceState
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.engine.game_engine import GameEngine, MoveResult
 
@@ -44,7 +45,7 @@ class Controller:
 
         if self._selected is None:
             piece = self._engine.get_piece_at(cell)
-            if piece is None:
+            if piece is None or piece.state in (PieceState.LONG_REST, PieceState.SHORT_REST):
                 return ControllerResult("ignored")
             self._selected = cell
             return ControllerResult("selected")

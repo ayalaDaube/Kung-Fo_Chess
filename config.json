@@ -1,8 +1,24 @@
 {
   "ms_per_pixel": 10,
   "ms_per_square": 1000,
-  "jump_duration_ms": 1000,
-  "long_rest_ms": 833,
-  "short_rest_ms": 625,
-  "cell_size": 100
+  "jump_duration_ms":3000,
+  "long_rest_ms": 5000,
+  "short_rest_ms": 2500,
+  "cell_size": 130,
+  "ui": {
+    "table_margin": 5,
+    "table_inner_pad": 4,
+    "time_col_ratio": 0.52,
+    "bg_color": [105, 105, 105],
+    "text_color": [230, 230, 230],
+    "header_color": [255, 255, 255]
+  },
+  "piece_scores": {
+    "P": 1,
+    "N": 3,
+    "B": 3,
+    "R": 5,
+    "Q": 9,
+    "K": 0
+  }
 }

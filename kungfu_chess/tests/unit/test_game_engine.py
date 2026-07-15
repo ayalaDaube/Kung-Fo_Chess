@@ -141,7 +141,23 @@ class TestGameEngine(unittest.TestCase):
         snap = build_snapshot(board, engine._arbiter, cell_size_px=100, selected_cell=None, game_over=False)
         self.assertEqual(snap.airborne_pos, Position(0, 0))
 
-    def test_snapshot_zero_distance_motion(self):
+    def test_move_blocked_during_long_rest(self):
+        engine, _ = make_engine("wR . .")
+        engine.request_move(Position(0, 0), Position(0, 2))
+        engine.wait(2000)  # arrives, enters LONG_REST
+        result = engine.request_move(Position(0, 2), Position(0, 0))
+        self.assertFalse(result.is_accepted)
+        self.assertEqual(result.reason, MoveReason.MOTION_IN_PROGRESS)
+
+    def test_jump_blocked_during_short_rest(self):
+        engine, _ = make_engine("wK . .", ms_per_square=1000)
+        engine.request_jump(Position(0, 0))
+        engine.wait(1000)  # jump ends, enters SHORT_REST
+        result = engine.request_jump(Position(0, 0))
+        self.assertFalse(result.is_accepted)
+        self.assertEqual(result.reason, MoveReason.MOTION_IN_PROGRESS)
+
+
         """Covers the `else 1.0` branch in build_snapshot when total_ms == 0 (same-cell motion)."""
         board = parse("wR .")
         arbiter = RealTimeArbiter(ms_per_square=1000)
