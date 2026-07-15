@@ -18,9 +18,12 @@ class PieceKind(Enum):
 
 
 class PieceState(Enum):
-    IDLE     = "idle"
-    MOVING   = "moving"
-    CAPTURED = "captured"
+    IDLE       = "idle"
+    MOVING     = "moving"
+    JUMPING    = "jumping"
+    LONG_REST  = "long_rest"
+    SHORT_REST = "short_rest"
+    CAPTURED   = "captured"
 
 
 @dataclass

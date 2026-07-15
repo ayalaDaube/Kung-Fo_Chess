@@ -2,5 +2,7 @@
   "ms_per_pixel": 10,
   "ms_per_square": 1000,
   "jump_duration_ms": 1000,
+  "long_rest_ms": 833,
+  "short_rest_ms": 625,
   "cell_size": 100
 }

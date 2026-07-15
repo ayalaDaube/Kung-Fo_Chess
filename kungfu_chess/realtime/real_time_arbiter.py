@@ -2,9 +2,9 @@ from __future__ import annotations
 from typing import Optional, Union
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceState
-from kungfu_chess.realtime.motion import Motion, MotionType, ArrivalEvent, EliminationEvent
+from kungfu_chess.realtime.motion import Motion, MotionType, ArrivalEvent, EliminationEvent, RestEvent, IdleEvent
 
-RealTimeEvent = Union[ArrivalEvent, EliminationEvent]
+RealTimeEvent = Union[ArrivalEvent, EliminationEvent, RestEvent, IdleEvent]
 
 
 class RealTimeArbiter:
@@ -13,10 +13,14 @@ class RealTimeArbiter:
     Reports ArrivalEvent and EliminationEvent — GameEngine applies them to the Board.
     """
 
-    def __init__(self, ms_per_square: int = 500, jump_duration_ms: int = 1000):
+    def __init__(self, ms_per_square: int = 500, jump_duration_ms: int = 1000,
+                 long_rest_ms: int = 833, short_rest_ms: int = 625):
         self._ms_per_square = ms_per_square
         self._jump_duration_ms = jump_duration_ms
+        self._long_rest_ms = long_rest_ms
+        self._short_rest_ms = short_rest_ms
         self._active_motions: list[Motion] = []
+        self._active_rests: list[tuple[Piece, int]] = []  # (piece, remaining_ms)
         self._airborne_pos: Optional[Position] = None
 
     # ── queries ───────────────────────────────────────────────────────────────
@@ -60,7 +64,7 @@ class RealTimeArbiter:
         Sends a piece airborne for a fixed duration.
         The piece remains logically on its cell — airborne_pos marks it as airborne.
         """
-        piece.state = PieceState.MOVING
+        piece.state = PieceState.JUMPING
         self._active_motions.append(Motion(
             motion_type=MotionType.JUMP,
             piece=piece,
@@ -95,11 +99,25 @@ class RealTimeArbiter:
 
     def advance_time(self, ms: int) -> list[RealTimeEvent]:
         """
-        Advances simulated time. Returns a list of RealTimeEvents (ArrivalEvent / EliminationEvent).
+        Advances simulated time. Returns a list of RealTimeEvents.
         GameEngine is responsible for applying them to the Board.
         """
+        events: list[RealTimeEvent] = []
+
+        # advance rests
+        finished_rests = []
+        for i, (piece, remaining) in enumerate(self._active_rests):
+            remaining -= ms
+            if remaining <= 0:
+                finished_rests.append(i)
+                events.append(IdleEvent(piece=piece))
+            else:
+                self._active_rests[i] = (piece, remaining)
+        for i in reversed(finished_rests):
+            self._active_rests.pop(i)
+
         if not self._active_motions:
-            return []
+            return events
 
         for motion in self._active_motions:
             motion.remaining_ms -= ms
@@ -112,7 +130,7 @@ class RealTimeArbiter:
         # Resolve MOVE before JUMP so air-capture is checked while the piece is still airborne
         arrived.sort(key=lambda m: 0 if m.motion_type == MotionType.MOVE else 1)
 
-        events: list[RealTimeEvent] = list(elimination_events)
+        events += list(elimination_events)
         for motion in arrived:
             events.extend(self._resolve_arrival(motion))
         return events
@@ -153,21 +171,24 @@ class RealTimeArbiter:
                 return m.piece.color
         return None
 
-    def _resolve_move(self, motion: Motion) -> list[ArrivalEvent]:
-        """Regular MOVE: reports arrival — GameEngine will move the piece on the board."""
-        motion.piece.state = PieceState.IDLE
+    def _resolve_move(self, motion: Motion) -> list[ArrivalEvent | RestEvent]:
+        """Regular MOVE: reports arrival + rest — GameEngine will move the piece and update state."""
         self._airborne_pos = None
-        return [ArrivalEvent(
-            arriving_piece=motion.piece,
-            from_pos=motion.from_pos,
-            destination=motion.to_pos,
-        )]
+        self._active_rests.append((motion.piece, self._long_rest_ms))
+        return [
+            ArrivalEvent(
+                arriving_piece=motion.piece,
+                from_pos=motion.from_pos,
+                destination=motion.to_pos,
+            ),
+            RestEvent(piece=motion.piece, rest_state=PieceState.LONG_REST, duration_ms=self._long_rest_ms),
+        ]
 
     def _resolve_arrival(self, motion: Motion) -> list[RealTimeEvent]:
         if motion.motion_type == MotionType.JUMP:
-            motion.piece.state = PieceState.IDLE
             self._airborne_pos = None
-            return []
+            self._active_rests.append((motion.piece, self._short_rest_ms))
+            return [RestEvent(piece=motion.piece, rest_state=PieceState.SHORT_REST, duration_ms=self._short_rest_ms)]
 
         events: list[RealTimeEvent] = self._resolve_late_collision(motion)
 

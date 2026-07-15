@@ -7,7 +7,7 @@ from kungfu_chess.model.piece import Piece, PieceKind, PieceColor, PieceState
 from kungfu_chess.model.board import Board
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
-from kungfu_chess.realtime.motion import ArrivalEvent, EliminationEvent
+from kungfu_chess.realtime.motion import ArrivalEvent, EliminationEvent, RestEvent, IdleEvent
 
 # Policy types — injectable, no hard-coded logic
 PromotionPolicy = Callable[[Piece, Board], None]  # called on arrival; mutates piece if needed
@@ -118,6 +118,12 @@ class GameEngine:
         if captured is not None and self._game_over_policy(captured):
             self._game_over = True
 
+    def _apply_rest(self, event: RestEvent) -> None:
+        event.piece.state = event.rest_state
+
+    def _apply_idle(self, event: IdleEvent) -> None:
+        event.piece.state = PieceState.IDLE
+
     def wait(self, ms: int) -> None:
         """Advances simulated time and applies all resulting board changes."""
         for event in self._arbiter.advance_time(ms):
@@ -125,3 +131,7 @@ class GameEngine:
                 self._apply_elimination(event)
             elif isinstance(event, ArrivalEvent):
                 self._apply_arrival(event)
+            elif isinstance(event, RestEvent):
+                self._apply_rest(event)
+            elif isinstance(event, IdleEvent):
+                self._apply_idle(event)

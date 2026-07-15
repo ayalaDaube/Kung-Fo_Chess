@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 from kungfu_chess.model.position import Position
-from kungfu_chess.model.piece import Piece
+from kungfu_chess.model.piece import Piece, PieceState
 
 
 class MotionType(Enum):
@@ -48,3 +48,20 @@ class ArrivalEvent:
     arriving_piece: Piece
     from_pos: Position
     destination: Position
+
+
+@dataclass(frozen=True)
+class RestEvent:
+    """
+    Reported when a motion finishes and the piece enters a rest state.
+    GameEngine is responsible for updating piece.state and scheduling IdleEvent.
+    """
+    piece: Piece
+    rest_state: PieceState  # LONG_REST or SHORT_REST
+    duration_ms: int
+
+
+@dataclass(frozen=True)
+class IdleEvent:
+    """Reported when a rest period ends. GameEngine sets piece.state = IDLE."""
+    piece: Piece

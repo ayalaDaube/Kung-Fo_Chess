@@ -10,6 +10,8 @@ class GameConfig:
     ms_per_pixel: int
     ms_per_square: int
     jump_duration_ms: int
+    long_rest_ms: int
+    short_rest_ms: int
     cell_size: int
 
     @property
@@ -24,6 +26,8 @@ def load_config(path: str = _CONFIG_PATH) -> GameConfig:
         "ms_per_pixel": 10,
         "ms_per_square": 1000,
         "jump_duration_ms": 1000,
+        "long_rest_ms": 833,
+        "short_rest_ms": 625,
         "cell_size": 100,
     }
     try:
@@ -37,5 +41,7 @@ def load_config(path: str = _CONFIG_PATH) -> GameConfig:
         ms_per_pixel=merged["ms_per_pixel"],
         ms_per_square=merged["ms_per_square"],
         jump_duration_ms=merged["jump_duration_ms"],
+        long_rest_ms=merged["long_rest_ms"],
+        short_rest_ms=merged["short_rest_ms"],
         cell_size=merged["cell_size"],
     )
