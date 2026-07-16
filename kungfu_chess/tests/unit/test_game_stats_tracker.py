@@ -6,7 +6,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.engine.game_engine import GameEngine
 from kungfu_chess.io.board_parser import BoardParser
-from kungfu_chess.rendering.game_stats_tracker import GameStatsTracker
+from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
 
 _DEFAULT_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 

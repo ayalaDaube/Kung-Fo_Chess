@@ -18,9 +18,9 @@ from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
-from kungfu_chess.rendering.snapshot_builder import build_snapshot
-from kungfu_chess.rendering.renderer import Renderer
-from kungfu_chess.rendering.game_stats_tracker import GameStatsTracker
+from kungfu_chess.engine.snapshot_builder import build_snapshot
+from kungfu_chess.ui.renderer import Renderer
+from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
 
 BOARD_TEXT = """
 bR bN bB bQ bK bB bN bR
@@ -50,13 +50,12 @@ def main():
     screen_w = monitor.width
     screen_h = monitor.height
 
-    # cell_size: לוח יתפוס 75% מגובה המסך
-    cell_size = (screen_h * 75 // 100) // board.height
+    cell_size = (screen_h * cfg.screen_fill_pct // 100) // board.height
 
     board_w   = board.width  * cell_size
     board_h   = board.height * cell_size
     coord_pad = cell_size // 3
-    table_w   = cell_size * 3          # רוחב טבלת היסטוריה משני הצדדים
+    table_w   = cell_size * cfg.table_cells_wide
     canvas_w  = board_w + table_w * 2 + coord_pad * 2
     canvas_h  = board_h + coord_pad * 2
     offset_x  = table_w + coord_pad
@@ -68,9 +67,9 @@ def main():
     mapper     = BoardMapper(board.width, board.height, cell_size, offset_x=offset_x, offset_y=offset_y)
     controller = Controller(mapper, engine)
 
-    cv2.namedWindow("Kung-Fo Chess", cv2.WINDOW_NORMAL)
-    cv2.moveWindow("Kung-Fo Chess", (screen_w - canvas_w) // 2, (screen_h - canvas_h) // 2)
-    cv2.resizeWindow("Kung-Fo Chess", canvas_w, canvas_h)
+    cv2.namedWindow(cfg.window_title, cv2.WINDOW_NORMAL)
+    cv2.moveWindow(cfg.window_title, (screen_w - canvas_w) // 2, (screen_h - canvas_h) // 2)
+    cv2.resizeWindow(cfg.window_title, canvas_w, canvas_h)
 
     def on_mouse(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDBLCLK:
@@ -78,7 +77,7 @@ def main():
         elif event == cv2.EVENT_LBUTTONDOWN:
             controller.click(x, y)
 
-    cv2.setMouseCallback("Kung-Fo Chess", on_mouse)
+    cv2.setMouseCallback(cfg.window_title, on_mouse)
 
     last = time.monotonic()
     while True:
@@ -96,7 +95,7 @@ def main():
             stats=stats,
         )
         frame = renderer.render(snapshot, delta_ms=delta_ms)
-        cv2.imshow("Kung-Fo Chess", frame.img)
+        cv2.imshow(cfg.window_title, frame.img)
         if cv2.waitKey(1) != -1:
             break
 

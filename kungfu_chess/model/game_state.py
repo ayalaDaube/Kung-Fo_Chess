@@ -15,6 +15,10 @@ class PieceSnapshot:
     state: PieceState
     pixel_x: float
     pixel_y: float
+    motion_progress: float = 1.0
+    """0.0 = motion just started, 1.0 = settled/not moving.
+    Computed by snapshot_builder from the arbiter's interpolation t.
+    Renderer uses this to sync animation frame rate to actual movement speed."""
 
 
 @dataclass(frozen=True)

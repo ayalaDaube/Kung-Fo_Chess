@@ -7,7 +7,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.engine.game_engine import GameEngine, MoveResult, MoveReason
 from kungfu_chess.io.board_parser import BoardParser
-from kungfu_chess.rendering.snapshot_builder import build_snapshot
+from kungfu_chess.ui.snapshot_builder import build_snapshot
 
 
 def parse(text: str) -> Board:
