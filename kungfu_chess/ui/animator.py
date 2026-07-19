@@ -11,28 +11,23 @@ Two improvements over the naive elapsed-clock approach:
      instead of freezing on the last frame. Visual only — piece.state is never touched.
 """
 from __future__ import annotations
-import json
 import pathlib
 from kungfu_chess.model.piece import PieceColor, PieceKind, PieceState
 from kungfu_chess.ui.assets.asset_paths import (
-    get_sprite_frame_path, get_config_path, frame_count, REST_STATES,
+    get_sprite_frame_path, frame_count, REST_STATES,
+)
+from kungfu_chess.ui.assets.animation_config import (
+    load_animation_config, _DEFAULT_ANIMATION_CONFIG,
 )
 
 # States whose frame index is driven by motion_progress instead of wall-clock
 _MOTION_DRIVEN = frozenset({PieceState.MOVING, PieceState.JUMPING})
 
-# Exposed for backward-compatible test imports
-_DEFAULT_ANIMATION_CONFIG = {"graphics": {"frames_per_sec": 6, "is_loop": True},
-                              "physics": {"next_state_when_finished": None}}
-
-
-def _load_config(kind: PieceKind, color: PieceColor, state: PieceState) -> dict:
-    """Loads animation config from disk; exposed for tests. Falls back to defaults if missing."""
-    path = get_config_path(kind, color, state)
-    if not path.exists():
-        return _DEFAULT_ANIMATION_CONFIG
-    with open(path, "rb") as f:
-        return json.load(f)
+def _load_config(kind: PieceKind, color: PieceColor, state: PieceState,
+                 resolve_path=None) -> dict:
+    """Delegates to load_animation_config; kept for backward-compatible test imports."""
+    kwargs = {"resolve_path": resolve_path} if resolve_path is not None else {}
+    return load_animation_config(kind, color, state, **kwargs)
 
 
 def _next_state_name(config: dict) -> str | None:

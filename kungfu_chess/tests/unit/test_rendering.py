@@ -16,12 +16,11 @@ import numpy as np
 from kungfu_chess.model.piece import PieceColor, PieceKind, PieceState, Piece
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.game_state import GameSnapshot, PieceSnapshot, MoveRecord
-from kungfu_chess.ui.asset_paths import (
+from kungfu_chess.ui.assets.asset_paths import (
     get_piece_root, get_config_path, get_sprite_frame_path,
     frame_count, COL_LETTERS, REST_STATES, _state_dir, _color_char,
 )
 from kungfu_chess.ui.animator import Animator, _load_config, _DEFAULT_ANIMATION_CONFIG
-from kungfu_chess.ui.sprite_loader import get_sprite_path
 from kungfu_chess.ui.renderer import _format_elapsed_ms, _blend_overlay, Renderer
 
 
@@ -63,7 +62,7 @@ class TestAssetPaths(unittest.TestCase):
         self.assertIn("wP", str(path))
         self.assertIn("move", str(path))
 
-    def test_frame_count(self):
+    def test_frame_count_fallback(self):
         self.assertEqual(frame_count(), 5)
 
     def test_col_letters_starts_with_a(self):
@@ -83,13 +82,10 @@ class TestAssetPaths(unittest.TestCase):
 class TestAnimatorLoadConfig(unittest.TestCase):
 
     def test_load_config_returns_default_for_missing_path(self):
-        # PieceState.CAPTURED has no asset folder — path won't exist
-        import unittest.mock as mock
-        with mock.patch("kungfu_chess.ui.animator.get_config_path") as m:
-            fake_path = mock.MagicMock()
-            fake_path.exists.return_value = False
-            m.return_value = fake_path
-            config = _load_config(PieceKind.PAWN, PieceColor.WHITE, PieceState.IDLE)
+        config = _load_config(
+            PieceKind.PAWN, PieceColor.WHITE, PieceState.IDLE,
+            resolve_path=lambda *_: pathlib.Path("/nonexistent"),
+        )
         self.assertEqual(config, _DEFAULT_ANIMATION_CONFIG)
 
     def test_load_config_returns_dict_for_existing_path(self):
@@ -153,21 +149,6 @@ class TestAnimator(unittest.TestCase):
         # piece_id not in _start → uses _elapsed_ms as start → elapsed=0 → progress=0
         progress = self.animator.get_rest_progress("unknown", PieceKind.ROOK, PieceColor.WHITE, PieceState.LONG_REST, 1000)
         self.assertEqual(progress, 0.0)
-
-
-# ---------------------------------------------------------------------------
-# sprite_loader
-# ---------------------------------------------------------------------------
-
-class TestSpriteLoader(unittest.TestCase):
-
-    def test_get_sprite_path_returns_frame_1(self):
-        path = get_sprite_path(PieceKind.ROOK, PieceColor.WHITE, PieceState.IDLE)
-        self.assertTrue(str(path).endswith("1.png"))
-
-    def test_get_sprite_path_contains_correct_piece_folder(self):
-        path = get_sprite_path(PieceKind.QUEEN, PieceColor.BLACK, PieceState.MOVING)
-        self.assertIn("bQ", str(path))
 
 
 # ---------------------------------------------------------------------------
