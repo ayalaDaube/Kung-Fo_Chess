@@ -38,14 +38,8 @@ def _blend_overlay(roi, color_bgra: tuple, alpha: float) -> None:
 
 class Renderer:
     """
+    Composition design
     Draws a GameSnapshot onto a canvas.
-
-    Layers (bottom → top):
-      1. Background + board + coordinates  (BoardLayer)
-      2. Cell highlights                   (OverlayLayer)
-      3. Pieces + cooldown bars            (PieceLayer)
-      4. Score labels + game-over banner   (HudLayer)
-      5. Move-history tables               (TableLayer)
     """
 
     def __init__(self, cell_size: int = 100, board_offset_x: int = 0, board_offset_y: int = 0,

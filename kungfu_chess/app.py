@@ -18,7 +18,7 @@ from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
-from kungfu_chess.engine.snapshot_builder import build_snapshot
+from kungfu_chess.ui.snapshot_builder import build_snapshot
 from kungfu_chess.ui.renderer import Renderer
 from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
 

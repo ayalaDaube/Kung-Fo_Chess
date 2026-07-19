@@ -67,33 +67,44 @@ class Animator:
             self._start[piece_id] = self._elapsed_ms
             self._last_state[piece_id] = state
 
-        config  = _load_config(kind, color, state)
-        fps     = config["graphics"]["frames_per_sec"]
-        is_loop = config["graphics"]["is_loop"]
-        total   = frame_count(kind, color, state)
+        config = _load_config(kind, color, state)
+        total  = frame_count(kind, color, state)
 
         if state in _MOTION_DRIVEN:
-            # Frame index driven by how far the piece has actually travelled
-            frame_index = int(motion_progress * total)
-            frame_index = min(frame_index, total - 1)
+            frame_index = self._motion_driven_frame(motion_progress, total)
         else:
-            elapsed_ms  = self._elapsed_ms - self._start.get(piece_id, 0.0)
-            frame_index = int(elapsed_ms / (1000.0 / fps))
-            if is_loop:
-                frame_index = frame_index % total
-            else:
-                if frame_index >= total:
-                    # Animation finished — show frame-1 of next state (visual only)
-                    next_state = _next_state_name(config)
-                    if next_state is not None:
-                        try:
-                            next_ps = PieceState(next_state)
-                            return get_sprite_frame_path(kind, color, next_ps, frame=1)
-                        except ValueError:
-                            pass
-                frame_index = min(frame_index, total - 1)
+            frame_index = self._clock_driven_frame(piece_id, config, total, kind, color, state)
+            if isinstance(frame_index, pathlib.Path):
+                return frame_index
 
         return get_sprite_frame_path(kind, color, state, frame=frame_index + 1)
+
+    def _motion_driven_frame(self, motion_progress: float, total: int) -> int:
+        return min(int(motion_progress * total), total - 1)
+
+    def _clock_driven_frame(self, piece_id: str, config: dict, total: int,
+                            kind: PieceKind, color: PieceColor,
+                            state: PieceState) -> int | pathlib.Path:
+        fps        = config["graphics"]["frames_per_sec"]
+        is_loop    = config["graphics"]["is_loop"]
+        elapsed_ms = self._elapsed_ms - self._start.get(piece_id, 0.0)
+        frame_index = int(elapsed_ms / (1000.0 / fps))
+        if is_loop:
+            return frame_index % total
+        if frame_index >= total:
+            return self._finished_frame_path(config, kind, color) or (total - 1)
+        return min(frame_index, total - 1)
+
+    def _finished_frame_path(self, config: dict, kind: PieceKind,
+                             color: PieceColor) -> pathlib.Path | None:
+        """Returns frame-1 path of the next state when a non-looping animation finishes."""
+        next_state = _next_state_name(config)
+        if next_state is None:
+            return None
+        try:
+            return get_sprite_frame_path(kind, color, PieceState(next_state), frame=1)
+        except ValueError:
+            return None
 
     def get_rest_progress(self, piece_id: str, kind: PieceKind,
                           color: PieceColor, state: PieceState,
