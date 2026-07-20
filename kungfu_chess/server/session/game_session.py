@@ -14,7 +14,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
-from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, Command
+from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, JoinCommand, Command
 
 
 def _default_engine_factory() -> GameEngine:
@@ -39,7 +39,8 @@ class GameSession:
     ) -> None:
         self._bus = bus
         self._engine: GameEngine = engine_factory()
-        self._colors: dict[str, PieceColor] = {}  # connection_id -> PieceColor
+        self._colors: dict[str, PieceColor] = {}    # connection_id -> PieceColor
+        self._usernames: dict[str, str] = {}         # connection_id -> username
 
     # ── connection management ─────────────────────────────────────────────────
 
@@ -54,9 +55,28 @@ class GameSession:
     def color_for(self, connection_id: str) -> PieceColor | None:
         return self._colors.get(connection_id)
 
+    def owns_piece_at(self, connection_id: str, pos: Position) -> bool:
+        """Returns True if the piece at pos belongs to this connection's assigned color."""
+        color = self._colors.get(connection_id)
+        if color is None:
+            return False
+        piece = self._engine.get_piece_at(pos)
+        return piece is not None and piece.color == color
+
+    async def record_join(self, connection_id: str, username: str) -> None:
+        """Stores the username for a connection and publishes PLAYER_JOINED."""
+        self._usernames[connection_id] = username
+        await self._bus.publish(topics.PLAYER_JOINED, {"conn_id": connection_id, "username": username})
+
+    def username_for(self, connection_id: str) -> str | None:
+        return self._usernames.get(connection_id)
+
     # ── command handling ──────────────────────────────────────────────────────
 
-    async def handle_command(self, connection_id: str, command: Command) -> tuple[MoveResult, GameSnapshot]:
+    async def handle_command(self, connection_id: str, command: Command) -> tuple:
+        if isinstance(command, JoinCommand):
+            await self.record_join(connection_id, command.username)
+            return None, None
         if isinstance(command, MoveCommand):
             result = self._engine.request_move(command.from_pos, command.to_pos)
             topic = topics.MOVE_ACCEPTED if result.is_accepted else topics.MOVE_REJECTED

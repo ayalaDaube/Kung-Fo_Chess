@@ -14,8 +14,17 @@ from kungfu_chess.model.position import Position
 # ── command-name constants ────────────────────────────────────────────────────
 CMD_MOVE: Final = "move"
 CMD_JUMP: Final = "jump"
+CMD_JOIN: Final = "join"
 
-_KNOWN_COMMANDS: frozenset[str] = frozenset({CMD_MOVE, CMD_JUMP})
+# ── server→client message type constants ─────────────────────────────────────
+MSG_ASSIGNED: Final = "assigned"
+MSG_JOINED:   Final = "joined"
+MSG_SNAPSHOT: Final = "snapshot"
+MSG_ERROR:    Final = "error"
+
+_KNOWN_COMMANDS: frozenset[str] = frozenset({CMD_MOVE, CMD_JUMP, CMD_JOIN})
+
+_USERNAME_MAX_LEN = 32
 
 
 # ── typed command structures ──────────────────────────────────────────────────
@@ -31,15 +40,28 @@ class JumpCommand:
 
 
 @dataclass(frozen=True)
+class JoinCommand:
+    username: str
+
+
+@dataclass(frozen=True)
 class ProtocolError:
     reason: str
 
 
-Command = Union[MoveCommand, JumpCommand]
+Command = Union[MoveCommand, JumpCommand, JoinCommand]
 ParseResult = Union[Command, ProtocolError]
 
 
 # ── parser ────────────────────────────────────────────────────────────────────
+def _parse_username(raw: object) -> str | ProtocolError:
+    if not isinstance(raw, str) or not raw.strip():
+        return ProtocolError("'username' must be a non-empty string")
+    if len(raw) > _USERNAME_MAX_LEN:
+        return ProtocolError(f"'username' must be at most {_USERNAME_MAX_LEN} characters")
+    return raw.strip()
+
+
 def _parse_pos(raw: object, field: str) -> Position | ProtocolError:
     if not isinstance(raw, dict):
         return ProtocolError(f"'{field}' must be an object")
@@ -76,8 +98,14 @@ def parse_incoming_message(raw: str) -> ParseResult:
             return to_pos
         return MoveCommand(from_pos=from_pos, to_pos=to_pos)
 
-    # CMD_JUMP
-    pos = _parse_pos(data.get("pos"), "pos")
-    if isinstance(pos, ProtocolError):
-        return pos
-    return JumpCommand(pos=pos)
+    if cmd == CMD_JUMP:
+        pos = _parse_pos(data.get("pos"), "pos")
+        if isinstance(pos, ProtocolError):
+            return pos
+        return JumpCommand(pos=pos)
+
+    # CMD_JOIN
+    username = _parse_username(data.get("username"))
+    if isinstance(username, ProtocolError):
+        return username
+    return JoinCommand(username=username)

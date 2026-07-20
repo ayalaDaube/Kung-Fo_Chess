@@ -8,7 +8,7 @@ import json
 import unittest
 
 from kungfu_chess.server.bus.event_bus import EventBus
-from kungfu_chess.server.network.protocol import CMD_MOVE, CMD_JUMP
+from kungfu_chess.server.network.protocol import CMD_MOVE, CMD_JUMP, CMD_JOIN
 from kungfu_chess.server.network.ws_server import WsServer
 from kungfu_chess.server.session.game_session import GameSession
 from kungfu_chess.engine.game_engine import GameEngine
@@ -80,7 +80,101 @@ def _move_msg(fr, fc, tr, tc) -> str:
                        "to":   {"row": tr, "col": tc}})
 
 
+def _join_msg(username: str) -> str:
+    return json.dumps({"cmd": CMD_JOIN, "username": username})
+
+
+def _jump_msg(row, col) -> str:
+    return json.dumps({"cmd": CMD_JUMP, "pos": {"row": row, "col": col}})
+
+
 # ── tests ─────────────────────────────────────────────────────────────────────
+
+class TestOwnershipEnforcement(unittest.TestCase):
+
+    def test_move_wrong_color_sends_error(self):
+        server = _make_server()
+        run(server.handle(FakeWebSocket()))          # conn-1 = WHITE
+        ws2 = FakeWebSocket(messages=[_move_msg(6, 4, 4, 4)])  # wP — belongs to WHITE
+        run(server.handle(ws2))                      # conn-2 = BLACK
+        error = json.loads(ws2.sent[1])              # sent[0]=assigned, sent[1]=error
+        self.assertEqual(error["type"], "error")
+        self.assertIn("not your piece", error["reason"])
+
+    def test_jump_wrong_color_sends_error(self):
+        server = _make_server()
+        run(server.handle(FakeWebSocket()))          # conn-1 = WHITE
+        ws2 = FakeWebSocket(messages=[_jump_msg(6, 4)])  # wP — belongs to WHITE
+        run(server.handle(ws2))                      # conn-2 = BLACK
+        error = json.loads(ws2.sent[1])
+        self.assertEqual(error["type"], "error")
+        self.assertIn("not your piece", error["reason"])
+
+    def test_move_correct_color_does_not_send_error(self):
+        server = _make_server()
+        ws1 = FakeWebSocket(messages=[_move_msg(6, 4, 4, 4)])  # wP — WHITE's piece
+        run(server.handle(FakeWebSocket()))          # conn-1 = WHITE (no messages)
+        run(server.handle(ws1))                      # conn-2 = BLACK... wait, ws1 connects second
+        # Re-do: ws1 connects first (WHITE), sends its own piece's move
+        server2 = _make_server()
+        ws_white = FakeWebSocket(messages=[_move_msg(6, 4, 4, 4)])
+        run(server2.handle(ws_white))                # WHITE connects and moves own pawn
+        # sent[0]=assigned, sent[1]=snapshot (accepted move)
+        self.assertGreaterEqual(len(ws_white.sent), 2)
+        self.assertEqual(json.loads(ws_white.sent[1])["type"], "snapshot")
+
+
+class TestRejectedMoveRelayed(unittest.TestCase):
+
+    def test_illegal_move_sends_error_to_sender(self):
+        """An engine-rejected move (illegal chess move) must send MSG_ERROR, not silence."""
+        server = _make_server()
+        # wP at (6,4) cannot move to (6,4) — same square
+        ws = FakeWebSocket(messages=[_move_msg(6, 4, 6, 4)])
+        run(server.handle(ws))                       # WHITE connects and sends illegal move
+        error = json.loads(ws.sent[1])
+        self.assertEqual(error["type"], "error")
+
+    def test_illegal_move_does_not_broadcast_snapshot(self):
+        """A rejected move must not broadcast a snapshot to other connections."""
+        server = _make_server()
+        ws2 = FakeWebSocket()                        # second player, no messages
+        ws1 = FakeWebSocket(messages=[_move_msg(6, 4, 6, 4)])  # illegal move
+        run(server.handle(ws2))                      # BLACK connects first
+        run(server.handle(ws1))                      # WHITE connects, sends illegal move
+        # ws2 should only have received its assigned message — no snapshot
+        self.assertEqual(len(ws2.sent), 1)
+        self.assertEqual(json.loads(ws2.sent[0])["type"], "assigned")
+
+
+class TestJoinHandshake(unittest.TestCase):
+
+    def test_valid_join_sends_ack(self):
+        server = _make_server()
+        ws = FakeWebSocket(messages=[_join_msg("alice")])
+        run(server.handle(ws))
+        # sent[0]=assigned, sent[1]=joined ack
+        ack = json.loads(ws.sent[1])
+        self.assertEqual(ack["type"], "joined")
+        self.assertEqual(ack["username"], "alice")
+
+    def test_both_seated_players_can_join(self):
+        """Joining is about identity, not seat assignment."""
+        server = _make_server()
+        ws1 = FakeWebSocket(messages=[_join_msg("alice")])
+        ws2 = FakeWebSocket(messages=[_join_msg("bob")])
+        run(server.handle(ws1))
+        run(server.handle(ws2))
+        self.assertEqual(json.loads(ws1.sent[1])["username"], "alice")
+        self.assertEqual(json.loads(ws2.sent[1])["username"], "bob")
+
+    def test_invalid_join_sends_error(self):
+        server = _make_server()
+        ws = FakeWebSocket(messages=[json.dumps({"cmd": CMD_JOIN, "username": ""})])
+        run(server.handle(ws))
+        error = json.loads(ws.sent[1])
+        self.assertEqual(error["type"], "error")
+
 
 class TestColorAssignmentViaWs(unittest.TestCase):
 
@@ -139,9 +233,9 @@ class TestValidMoveRelayed(unittest.TestCase):
 
     def test_valid_move_triggers_snapshot_to_sender(self):
         server = _make_server()
-        ws1 = FakeWebSocket(messages=[_move_msg(6, 4, 4, 4)])
-        run(server.handle(FakeWebSocket()))  # ws2 connects first
-        run(server.handle(ws1))              # ws1 connects and sends move
+        ws1 = FakeWebSocket(messages=[_move_msg(6, 4, 4, 4)])  # wP — WHITE's piece
+        run(server.handle(ws1))              # ws1 connects first = WHITE, sends move
+        run(server.handle(FakeWebSocket()))  # ws2 connects second = BLACK
 
         # ws1: sent[0]=assigned, sent[1]=snapshot
         self.assertGreaterEqual(len(ws1.sent), 2)

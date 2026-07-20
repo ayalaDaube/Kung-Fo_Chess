@@ -14,7 +14,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
-from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand
+from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, JoinCommand
 from kungfu_chess.server.session.game_session import GameSession
 
 
@@ -82,7 +82,59 @@ class TestSessionFull(unittest.TestCase):
         self.assertTrue(session.is_full())
 
 
+class TestRecordJoin(unittest.TestCase):
+
+    def test_stores_username(self):
+        session, _ = _make_session()
+        run(session.record_join("conn-1", "alice"))
+        self.assertEqual(session.username_for("conn-1"), "alice")
+
+    def test_unknown_conn_returns_none(self):
+        session, _ = _make_session()
+        self.assertIsNone(session.username_for("nobody"))
+
+    def test_publishes_player_joined(self):
+        session, bus = _make_session()
+        received = []
+        bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
+        run(session.record_join("conn-1", "alice"))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["username"], "alice")
+        self.assertEqual(received[0]["conn_id"], "conn-1")
+
+
+class TestOwnsPieceAt(unittest.TestCase):
+
+    def test_returns_true_for_own_piece(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")  # WHITE
+        self.assertTrue(session.owns_piece_at("conn-1", Position(6, 4)))  # wP
+
+    def test_returns_false_for_opponent_piece(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")  # WHITE
+        session.assign_color("conn-2")  # BLACK
+        self.assertFalse(session.owns_piece_at("conn-2", Position(6, 4)))  # wP
+
+    def test_returns_false_for_empty_square(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        self.assertFalse(session.owns_piece_at("conn-1", Position(4, 4)))
+
+    def test_returns_false_for_unassigned_connection(self):
+        session, _ = _make_session()
+        self.assertFalse(session.owns_piece_at("nobody", Position(6, 4)))
+
+
 class TestHandleCommand(unittest.TestCase):
+
+    def test_handle_command_join_routes_to_record_join(self):
+        session, bus = _make_session()
+        received = []
+        bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
+        run(session.handle_command("conn-1", JoinCommand(username="bob")))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["username"], "bob")
 
     def test_valid_move_publishes_snapshot(self):
         session, bus = _make_session()
