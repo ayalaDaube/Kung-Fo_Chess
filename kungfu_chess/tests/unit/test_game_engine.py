@@ -7,7 +7,6 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.engine.game_engine import GameEngine, MoveResult, MoveReason
 from kungfu_chess.io.board_parser import BoardParser
-from kungfu_chess.ui.snapshot_builder import build_snapshot
 
 
 def parse(text: str) -> Board:
@@ -109,36 +108,36 @@ class TestGameEngine(unittest.TestCase):
         self.assertIsNone(engine.get_piece_at(Position(0, 1)))
 
     def test_snapshot_idle_piece(self):
-        engine, board = make_engine("wR . .", ms_per_square=1000)
-        snap = build_snapshot(board, engine._arbiter, cell_size_px=100, selected_cell=None, game_over=False)
+        engine, _ = make_engine("wR . .", ms_per_square=1000)
+        snap = engine.snapshot()
         self.assertEqual(snap.board_width, 3)
         self.assertEqual(snap.board_height, 1)
         self.assertFalse(snap.game_over)
         self.assertEqual(len(snap.pieces), 1)
-        self.assertEqual(snap.pieces[0].pixel_x, 0)
-        self.assertEqual(snap.pieces[0].pixel_y, 0)
+        self.assertIsNone(snap.pieces[0].target_cell)
+        self.assertEqual(snap.pieces[0].motion_progress, 1.0)
 
     def test_snapshot_excludes_captured_piece(self):
-        engine, board = make_engine("wR bK", ms_per_square=1000)
+        engine, _ = make_engine("wR bK", ms_per_square=1000)
         engine.request_move(Position(0, 0), Position(0, 1))
         engine.wait(1000)
-        snap = build_snapshot(board, engine._arbiter, cell_size_px=100, selected_cell=None, game_over=True)
+        snap = engine.snapshot()
         self.assertEqual(len(snap.pieces), 1)
         self.assertEqual(snap.pieces[0].kind, PieceKind.ROOK)
 
-    def test_snapshot_moving_piece_interpolation(self):
-        engine, board = make_engine("wR . .", ms_per_square=1000)
+    def test_snapshot_moving_piece_has_target_cell(self):
+        engine, _ = make_engine("wR . .", ms_per_square=1000)
         engine.request_move(Position(0, 0), Position(0, 2))
         engine.wait(1000)
-        snap = build_snapshot(board, engine._arbiter, cell_size_px=100, selected_cell=None, game_over=False)
-        px = snap.pieces[0].pixel_x
-        self.assertGreater(px, 0)
-        self.assertLess(px, 200)
+        snap = engine.snapshot()
+        self.assertEqual(snap.pieces[0].target_cell, Position(0, 2))
+        self.assertGreater(snap.pieces[0].motion_progress, 0.0)
+        self.assertLess(snap.pieces[0].motion_progress, 1.0)
 
     def test_snapshot_airborne_pos(self):
-        engine, board = make_engine("wK . .", ms_per_square=1000)
+        engine, _ = make_engine("wK . .", ms_per_square=1000)
         engine.request_jump(Position(0, 0))
-        snap = build_snapshot(board, engine._arbiter, cell_size_px=100, selected_cell=None, game_over=False)
+        snap = engine.snapshot()
         self.assertEqual(snap.airborne_pos, Position(0, 0))
 
     def test_move_blocked_during_long_rest(self):
@@ -163,9 +162,10 @@ class TestGameEngine(unittest.TestCase):
         arbiter = RealTimeArbiter(ms_per_square=1000)
         piece = board.get_piece(Position(0, 0))
         arbiter.start_motion(piece, Position(0, 0), Position(0, 0))
-        snap = build_snapshot(board, arbiter, cell_size_px=100, selected_cell=None, game_over=False)
-        self.assertEqual(snap.pieces[0].pixel_x, 0)
-        self.assertEqual(snap.pieces[0].pixel_y, 0)
+        engine = GameEngine(board, RuleEngine(), arbiter)
+        snap = engine.snapshot()
+        self.assertIsNone(snap.pieces[0].target_cell)
+        self.assertEqual(snap.pieces[0].motion_progress, 1.0)
 
 
 if __name__ == "__main__":

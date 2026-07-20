@@ -30,6 +30,17 @@ class PieceLayer:
         for piece in snapshot.pieces:
             self._draw_piece(canvas, piece)
 
+    def _pixel_position(self, piece) -> tuple[int, int]:
+        cs = self._cell_size
+        if piece.target_cell is None:
+            col = piece.cell.col
+            row = piece.cell.row
+        else:
+            t   = piece.motion_progress
+            col = piece.cell.col + t * (piece.target_cell.col - piece.cell.col)
+            row = piece.cell.row + t * (piece.target_cell.row - piece.cell.row)
+        return self._offset_x + int(col * cs), self._offset_y + int(row * cs)
+
     def _draw_piece(self, canvas: Img, piece) -> None:
         cs          = self._cell_size
         sprite_path = self._animator.get_frame(
@@ -40,8 +51,7 @@ class PieceLayer:
             return
         sprite     = Img()
         sprite.img = self._cache.get(sprite_path, cs, cs, keep_aspect=True)
-        x = self._offset_x + int(piece.pixel_x)
-        y = self._offset_y + int(piece.pixel_y)
+        x, y = self._pixel_position(piece)
         if 0 <= x < canvas.img.shape[1] and 0 <= y < canvas.img.shape[0]:
             sprite.draw_on(canvas, x, y)
             if piece.state in REST_STATES:

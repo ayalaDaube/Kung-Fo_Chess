@@ -5,9 +5,11 @@ from typing import Optional, Callable
 from kungfu_chess.model.position import Position
 from kungfu_chess.model.piece import Piece, PieceKind, PieceColor, PieceState
 from kungfu_chess.model.board import Board
+from kungfu_chess.model.game_state import GameSnapshot
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.realtime.motion import ArrivalEvent, EliminationEvent, RestEvent, IdleEvent
+from kungfu_chess.engine.snapshot_builder import build_snapshot, StatsProvider
 
 # Policy types — injectable, no hard-coded logic
 PromotionPolicy = Callable[[Piece, Board], None]  # called on arrival; mutates piece if needed
@@ -151,3 +153,8 @@ class GameEngine:
                 self._apply_idle(event)
                 result.append(event)
         return result
+
+    def snapshot(self, selected_cell: Optional[Position] = None,
+                 stats: Optional[StatsProvider] = None) -> GameSnapshot:
+        """Returns a pixel-agnostic GameSnapshot. The only sanctioned way to read game state."""
+        return build_snapshot(self._board, self._arbiter, selected_cell, self._game_over, stats)

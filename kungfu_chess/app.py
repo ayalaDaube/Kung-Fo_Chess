@@ -13,30 +13,19 @@ from screeninfo import get_monitors
 
 from kungfu_chess.config_loader import load_config
 from kungfu_chess.io.board_parser import BoardParser
+from kungfu_chess.io.standard_setup import STANDARD_STARTING_POSITION
 from kungfu_chess.engine.game_engine import GameEngine
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
-from kungfu_chess.ui.snapshot_builder import build_snapshot
 from kungfu_chess.ui.renderer import Renderer
 from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
-
-BOARD_TEXT = """
-bR bN bB bQ bK bB bN bR
-bP bP bP bP bP bP bP bP
-.  .  .  .  .  .  .  .
-.  .  .  .  .  .  .  .
-.  .  .  .  .  .  .  .
-.  .  .  .  .  .  .  .
-wP wP wP wP wP wP wP wP
-wR wN wB wQ wK wB wN wR
-"""
 
 
 def main():
     cfg     = load_config()
-    board   = BoardParser().parse(BOARD_TEXT)
+    board   = BoardParser().parse(STANDARD_STARTING_POSITION)
     arbiter = RealTimeArbiter(
         ms_per_square=cfg.ms_per_square,
         jump_duration_ms=cfg.jump_duration_ms,
@@ -87,13 +76,7 @@ def main():
 
         events   = engine.wait(int(delta_ms))
         stats.process(events, int(delta_ms))
-        snapshot = build_snapshot(
-            board, arbiter,
-            cell_size_px=cell_size,
-            selected_cell=controller.selected_cell,
-            game_over=engine.game_over,
-            stats=stats,
-        )
+        snapshot = engine.snapshot(selected_cell=controller.selected_cell, stats=stats)
         frame = renderer.render(snapshot, delta_ms=delta_ms)
         cv2.imshow(cfg.window_title, frame.img)
         if cv2.waitKey(1) != -1:

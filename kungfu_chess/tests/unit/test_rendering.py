@@ -2,8 +2,6 @@
 Unit tests for the UI rendering layer:
   - asset_paths
   - animator
-  - sprite_loader
-  - snapshot_builder
   - renderer (pure logic: _format_elapsed_ms, _blend_overlay, sizing helpers)
   - game_stats_tracker (EliminationEvent branch)
 """
@@ -270,7 +268,7 @@ class TestSnapshotBuilder(unittest.TestCase):
         ps = PieceSnapshot(
             id="p1", kind=PieceKind.ROOK, color=PieceColor.WHITE,
             cell=Position(0, 0), state=PieceState.IDLE,
-            pixel_x=0.0, pixel_y=0.0,
+            target_cell=None,
         )
         self.assertEqual(ps.kind, PieceKind.ROOK)
         self.assertEqual(ps.color, PieceColor.WHITE)

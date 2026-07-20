@@ -132,5 +132,45 @@ class TestHandleCommand(unittest.TestCase):
         self.assertEqual(len(accepted), 1)
 
 
+class TestHandleCommandSnapshot(unittest.TestCase):
+
+    def test_captured_piece_excluded_from_snapshot(self):
+        """After a king capture, the captured king must not appear in the snapshot."""
+        board = BoardParser().parse("wR bK")
+        engine = GameEngine(board=board, rule_engine=RuleEngine(),
+                            arbiter=RealTimeArbiter(ms_per_square=500))
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=lambda: engine)
+        session.assign_color("conn-1")
+
+        cmd = MoveCommand(from_pos=Position(0, 0), to_pos=Position(0, 1))
+        run(session.handle_command("conn-1", cmd))
+        engine.wait(1000)  # piece arrives and captures king
+
+        snapshot = session.build_snapshot()
+        kinds = [p.kind for p in snapshot.pieces]
+        from kungfu_chess.model.piece import PieceKind
+        self.assertNotIn(PieceKind.KING, kinds)
+        self.assertEqual(len(snapshot.pieces), 1)
+
+    def test_scores_populated_when_stats_wired_in(self):
+        """engine.snapshot(stats=tracker) must reflect captured piece scores."""
+        from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
+        _SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
+
+        board = BoardParser().parse("wR bP")
+        engine = GameEngine(board=board, rule_engine=RuleEngine(),
+                            arbiter=RealTimeArbiter(ms_per_square=500))
+        tracker = GameStatsTracker(board_height=board.height, piece_scores=_SCORES)
+
+        engine.request_move(Position(0, 0), Position(0, 1))
+        events = engine.wait(1000)
+        tracker.process(events, 1000)
+
+        snapshot = engine.snapshot(stats=tracker)
+        from kungfu_chess.model.piece import PieceColor
+        self.assertEqual(snapshot.scores[PieceColor.WHITE], 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
