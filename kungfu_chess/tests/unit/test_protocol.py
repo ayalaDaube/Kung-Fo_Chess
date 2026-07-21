@@ -9,8 +9,8 @@ import unittest
 from kungfu_chess.model.position import Position
 from kungfu_chess.server.network.protocol import (
     parse_incoming_message,
-    MoveCommand, JumpCommand, JoinCommand, ProtocolError,
-    CMD_MOVE, CMD_JUMP, CMD_JOIN,
+    MoveCommand, JumpCommand, ProtocolError,
+    CMD_MOVE, CMD_JUMP,
 )
 
 
@@ -50,42 +50,6 @@ class TestParseValidJump(unittest.TestCase):
     def test_pos_correct(self):
         result = parse_incoming_message(_jump(7, 1))
         self.assertEqual(result.pos, Position(7, 1))
-
-
-class TestParseValidJoin(unittest.TestCase):
-
-    def test_returns_join_command(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": "alice"})
-        result = parse_incoming_message(raw)
-        self.assertIsInstance(result, JoinCommand)
-
-    def test_username_stored(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": "alice"})
-        result = parse_incoming_message(raw)
-        self.assertEqual(result.username, "alice")
-
-
-class TestParseInvalidJoin(unittest.TestCase):
-
-    def test_empty_username(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": ""})
-        self.assertIsInstance(parse_incoming_message(raw), ProtocolError)
-
-    def test_whitespace_only_username(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": "   "})
-        self.assertIsInstance(parse_incoming_message(raw), ProtocolError)
-
-    def test_overlong_username(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": "a" * 33})
-        self.assertIsInstance(parse_incoming_message(raw), ProtocolError)
-
-    def test_non_string_username(self):
-        raw = json.dumps({"cmd": CMD_JOIN, "username": 42})
-        self.assertIsInstance(parse_incoming_message(raw), ProtocolError)
-
-    def test_missing_username_field(self):
-        raw = json.dumps({"cmd": CMD_JOIN})
-        self.assertIsInstance(parse_incoming_message(raw), ProtocolError)
 
 
 class TestParseMalformed(unittest.TestCase):

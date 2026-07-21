@@ -16,7 +16,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
-from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, JoinCommand, Command
+from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, Command
 from kungfu_chess.server.session.player_identity import (
     PlayerRecord, IdentityResolver, default_identity_resolver,
 )
@@ -75,8 +75,8 @@ class GameSession:
     def assign_color(self, connection_id: str) -> PieceColor:
         """
         Assign the next available player color to connection_id.
-        Creates a placeholder PlayerRecord with connection_id as the
-        temporary username until a JoinCommand arrives.
+        Creates a placeholder PlayerRecord keyed by connection_id until
+        record_join() renames it to the real username.
         """
         color = PieceColor.WHITE if not self._players else PieceColor.BLACK
         record = PlayerRecord(username=connection_id, color=color, connection_id=connection_id)
@@ -159,9 +159,6 @@ class GameSession:
     # ── command handling ──────────────────────────────────────────────────────
 
     async def handle_command(self, connection_id: str, command: Command) -> tuple:
-        if isinstance(command, JoinCommand):
-            await self.record_join(connection_id, command.username)
-            return None, None
         if isinstance(command, MoveCommand):
             result = self._engine.request_move(command.from_pos, command.to_pos)
             topic = topics.MOVE_ACCEPTED if result.is_accepted else topics.MOVE_REJECTED

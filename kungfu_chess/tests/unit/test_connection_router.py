@@ -18,10 +18,10 @@ from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.config import AuthConfig, RealtimeConfig
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
-    CMD_MOVE, CMD_JOIN, CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
+    CMD_MOVE, CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
     CMD_LOGIN, CMD_REGISTER,
     MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_ROOM_CANCELLED,
-    MSG_ASSIGNED, MSG_JOINED, MSG_ERROR, MSG_LOGGED_IN, MSG_REGISTERED,
+    MSG_ASSIGNED, MSG_ERROR, MSG_LOGGED_IN, MSG_REGISTERED,
     MSG_SNAPSHOT,
 )
 from kungfu_chess.server.session.game_session import GameSession
@@ -294,25 +294,6 @@ class TestAuthRouting(unittest.TestCase):
         run(router.handle(ws))
         msg = json.loads(ws.sent[0])
         self.assertEqual(msg["type"], MSG_ERROR)
-
-
-class TestJoinCommandInRoom(unittest.TestCase):
-
-    def test_join_command_sends_joined_ack(self):
-        router = _make_router()
-
-        async def _go():
-            rid = await router.create_room()
-            ws = FakeWebSocket(messages=[
-                _msg(cmd=CMD_JOIN_ROOM, room_id=rid, username="alice"),
-                _msg(cmd=CMD_JOIN, username="alice"),
-            ])
-            await router.handle(ws)
-            return ws
-
-        ws = run(_go())
-        types = [json.loads(m)["type"] for m in ws.sent]
-        self.assertIn(MSG_JOINED, types)
 
 
 class TestReconnect(unittest.TestCase):

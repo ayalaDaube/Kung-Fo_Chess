@@ -22,10 +22,10 @@ from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.config import RealtimeConfig
 from kungfu_chess.server.network.protocol import (
     parse_incoming_message, ProtocolError,
-    JoinCommand, MoveCommand, JumpCommand,
+    MoveCommand, JumpCommand,
     LoginCommand, RegisterCommand,
     CreateRoomCommand, JoinRoomCommand, CancelRoomCommand,
-    MSG_ASSIGNED, MSG_JOINED, MSG_ERROR,
+    MSG_ASSIGNED, MSG_ERROR,
     MSG_LOGGED_IN, MSG_REGISTERED,
     MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_ROOM_CANCELLED,
 )
@@ -168,10 +168,6 @@ class ConnectionRouter:
                 return
 
         move_result, snapshot = await session.handle_command(conn_id, result)
-
-        if isinstance(result, JoinCommand):
-            await self._send(conn_id, {"type": MSG_JOINED, "username": result.username})
-            return
 
         if not move_result.is_accepted:
             await self._send_error(conn_id, move_result.reason.value)

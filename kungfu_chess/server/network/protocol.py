@@ -15,7 +15,6 @@ from kungfu_chess.server.auth.constants import PASSWORD_MAX_LEN, USERNAME_MAX_LE
 # ── command-name constants ────────────────────────────────────────────────────
 CMD_MOVE: Final = "move"
 CMD_JUMP: Final = "jump"
-CMD_JOIN: Final = "join"
 CMD_LOGIN:    Final = "login"
 CMD_REGISTER: Final = "register"
 CMD_CREATE_ROOM: Final = "create_room"
@@ -24,7 +23,6 @@ CMD_CANCEL_ROOM: Final = "cancel_room"
 
 # ── server→client message type constants ─────────────────────────────────────
 MSG_ASSIGNED:   Final = "assigned"
-MSG_JOINED:     Final = "joined"
 MSG_SNAPSHOT:   Final = "snapshot"
 MSG_ERROR:      Final = "error"
 MSG_LOGGED_IN:  Final = "logged_in"
@@ -34,7 +32,7 @@ MSG_ROOM_JOINED:  Final = "room_joined"
 MSG_ROOM_CANCELLED: Final = "room_cancelled"
 
 _KNOWN_COMMANDS: frozenset[str] = frozenset({
-    CMD_MOVE, CMD_JUMP, CMD_JOIN, CMD_LOGIN, CMD_REGISTER,
+    CMD_MOVE, CMD_JUMP, CMD_LOGIN, CMD_REGISTER,
     CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
 })
 
@@ -52,11 +50,6 @@ class MoveCommand:
 @dataclass(frozen=True)
 class JumpCommand:
     pos: Position
-
-
-@dataclass(frozen=True)
-class JoinCommand:
-    username: str
 
 
 @dataclass(frozen=True)
@@ -93,7 +86,7 @@ class ProtocolError:
 
 
 Command = Union[
-    MoveCommand, JumpCommand, JoinCommand,
+    MoveCommand, JumpCommand,
     LoginCommand, RegisterCommand,
     CreateRoomCommand, JoinRoomCommand, CancelRoomCommand,
 ]
@@ -158,13 +151,6 @@ def parse_incoming_message(raw: str) -> ParseResult:
         if isinstance(pos, ProtocolError):
             return pos
         return JumpCommand(pos=pos)
-
-    # CMD_JOIN
-    if cmd == CMD_JOIN:
-        username = _parse_username(data.get("username"))
-        if isinstance(username, ProtocolError):
-            return username
-        return JoinCommand(username=username)
 
     if cmd == CMD_LOGIN:
         username = _parse_username(data.get("username"))

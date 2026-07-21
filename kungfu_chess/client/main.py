@@ -9,8 +9,16 @@ from kungfu_chess.server.config import load_server_config
 async def _main() -> None:
     config = load_server_config()
     username = prompt_username()
-    ws = await connect_and_join(config.host, config.port, username)
-    print(f"Joined as {username!r}. Waiting for opponent...")
+
+    raw = input("Enter a room ID to join, or leave blank to create a new room: ").strip()
+    room_id = raw or None
+
+    ws, room_id, role, color = await connect_and_join(config.host, config.port, username, room_id)
+    print(f"Room ID: {room_id}")
+    if role == "player":
+        print(f"Joined as {username!r} — color: {color}. Waiting for opponent...")
+    else:
+        print(f"Joined as spectator in room {room_id!r}.")
     await ws.close()
 
 

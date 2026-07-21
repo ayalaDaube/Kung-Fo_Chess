@@ -14,7 +14,7 @@ from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
-from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, JoinCommand
+from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand
 from kungfu_chess.server.session.game_session import GameSession
 
 
@@ -200,15 +200,6 @@ class TestOwnsPieceAt(unittest.TestCase):
 
 
 class TestHandleCommand(unittest.TestCase):
-
-    def test_handle_command_join_routes_to_record_join(self):
-        session, bus = _make_session()
-        session.assign_color("conn-1")
-        received = []
-        bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
-        run(session.handle_command("conn-1", JoinCommand(username="bob")))
-        self.assertEqual(len(received), 1)
-        self.assertEqual(received[0]["username"], "bob")
 
     def test_valid_move_publishes_snapshot(self):
         session, bus = _make_session()

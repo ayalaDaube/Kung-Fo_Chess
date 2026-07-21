@@ -18,8 +18,8 @@ from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.config import RealtimeConfig
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
-    CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_JOIN,
-    MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_ASSIGNED, MSG_JOINED,
+    CMD_CREATE_ROOM, CMD_JOIN_ROOM,
+    MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_ASSIGNED,
 )
 from kungfu_chess.server.session.game_session import GameSession
 
@@ -78,12 +78,6 @@ class TestJoinHandshakeEndToEnd(unittest.TestCase):
                 assigned = json.loads(await ws.recv())
                 self.assertEqual(assigned["type"], MSG_ASSIGNED)
                 self.assertIn(assigned["color"], ("w", "b"))
-
-                # send join (identity)
-                await ws.send(json.dumps({"cmd": CMD_JOIN, "username": "alice"}))
-                ack = json.loads(await ws.recv())
-                self.assertEqual(ack["type"], MSG_JOINED)
-                self.assertEqual(ack["username"], "alice")
 
                 await ws.close()
 
