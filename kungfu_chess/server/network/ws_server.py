@@ -10,10 +10,12 @@ import logging
 from typing import Any
 
 from kungfu_chess.model.game_state import GameSnapshot
+from kungfu_chess.server.auth.auth_service import AuthService, RegisterStatus, LoginStatus
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.network.protocol import (
     parse_incoming_message, ProtocolError, JoinCommand, MoveCommand, JumpCommand,
-    MSG_ASSIGNED, MSG_JOINED, MSG_SNAPSHOT, MSG_ERROR,
+    LoginCommand, RegisterCommand,
+    MSG_ASSIGNED, MSG_JOINED, MSG_SNAPSHOT, MSG_ERROR, MSG_LOGGED_IN, MSG_REGISTERED,
 )
 from kungfu_chess.server.session.game_session import GameSession
 
@@ -47,9 +49,11 @@ class WsServer:
         self,
         session: GameSession | None = None,
         bus: EventBus | None = None,
+        auth_service: AuthService | None = None,
     ) -> None:
         self._bus = bus or EventBus()
         self._session = session or GameSession(self._bus)
+        self._auth = auth_service
         self._connections: dict[str, Any] = {}
 
     # ── connection handler (passed to websockets.serve) ───────────────────────
@@ -91,6 +95,10 @@ class WsServer:
                 await self._send_error(conn_id, "not your piece")
                 return
 
+        if isinstance(result, (LoginCommand, RegisterCommand)):
+            await self._handle_auth(conn_id, result)
+            return
+
         move_result, snapshot = await self._session.handle_command(conn_id, result)
 
         if isinstance(result, JoinCommand):
@@ -104,6 +112,31 @@ class WsServer:
             return
 
         await self._broadcast_snapshot(snapshot)
+
+    async def _handle_auth(self, conn_id: str, command: LoginCommand | RegisterCommand) -> None:
+        if self._auth is None:
+            await self._send_error(conn_id, "auth not configured")
+            return
+        if isinstance(command, RegisterCommand):
+            result = await self._auth.register(command.username, command.password)
+            if result.status == RegisterStatus.SUCCESS:
+                ws = self._connections.get(conn_id)
+                if ws:
+                    await ws.send(json.dumps({"type": MSG_REGISTERED, "username": command.username}))
+            else:
+                await self._send_error(conn_id, result.message)
+        else:  # LoginCommand
+            result = await self._auth.login(command.username, command.password)
+            if result.status == LoginStatus.SUCCESS:
+                ws = self._connections.get(conn_id)
+                if ws:
+                    await ws.send(json.dumps({
+                        "type": MSG_LOGGED_IN,
+                        "username": result.user.username,
+                        "elo": result.user.elo,
+                    }))
+            else:
+                await self._send_error(conn_id, "invalid credentials")
 
     async def _send_error(self, conn_id: str, reason: str) -> None:
         ws = self._connections.get(conn_id)

@@ -10,21 +10,27 @@ from dataclasses import dataclass
 from typing import Final, Union
 
 from kungfu_chess.model.position import Position
+from kungfu_chess.server.auth.constants import PASSWORD_MAX_LEN, USERNAME_MAX_LEN
 
 # ── command-name constants ────────────────────────────────────────────────────
 CMD_MOVE: Final = "move"
 CMD_JUMP: Final = "jump"
 CMD_JOIN: Final = "join"
+CMD_LOGIN:    Final = "login"
+CMD_REGISTER: Final = "register"
 
 # ── server→client message type constants ─────────────────────────────────────
-MSG_ASSIGNED: Final = "assigned"
-MSG_JOINED:   Final = "joined"
-MSG_SNAPSHOT: Final = "snapshot"
-MSG_ERROR:    Final = "error"
+MSG_ASSIGNED:   Final = "assigned"
+MSG_JOINED:     Final = "joined"
+MSG_SNAPSHOT:   Final = "snapshot"
+MSG_ERROR:      Final = "error"
+MSG_LOGGED_IN:  Final = "logged_in"
+MSG_REGISTERED: Final = "registered"
 
-_KNOWN_COMMANDS: frozenset[str] = frozenset({CMD_MOVE, CMD_JUMP, CMD_JOIN})
+_KNOWN_COMMANDS: frozenset[str] = frozenset({CMD_MOVE, CMD_JUMP, CMD_JOIN, CMD_LOGIN, CMD_REGISTER})
 
-_USERNAME_MAX_LEN = 32
+_USERNAME_MAX_LEN = USERNAME_MAX_LEN
+_PASSWORD_MAX_LEN = PASSWORD_MAX_LEN
 
 
 # ── typed command structures ──────────────────────────────────────────────────
@@ -45,11 +51,23 @@ class JoinCommand:
 
 
 @dataclass(frozen=True)
+class LoginCommand:
+    username: str
+    password: str
+
+
+@dataclass(frozen=True)
+class RegisterCommand:
+    username: str
+    password: str
+
+
+@dataclass(frozen=True)
 class ProtocolError:
     reason: str
 
 
-Command = Union[MoveCommand, JumpCommand, JoinCommand]
+Command = Union[MoveCommand, JumpCommand, JoinCommand, LoginCommand, RegisterCommand]
 ParseResult = Union[Command, ProtocolError]
 
 
@@ -60,6 +78,14 @@ def _parse_username(raw: object) -> str | ProtocolError:
     if len(raw) > _USERNAME_MAX_LEN:
         return ProtocolError(f"'username' must be at most {_USERNAME_MAX_LEN} characters")
     return raw.strip()
+
+
+def _parse_password(raw: object) -> str | ProtocolError:
+    if not isinstance(raw, str) or not raw:
+        return ProtocolError("'password' must be a non-empty string")
+    if len(raw) > _PASSWORD_MAX_LEN:
+        return ProtocolError(f"'password' must be at most {_PASSWORD_MAX_LEN} characters")
+    return raw
 
 
 def _parse_pos(raw: object, field: str) -> Position | ProtocolError:
@@ -105,7 +131,26 @@ def parse_incoming_message(raw: str) -> ParseResult:
         return JumpCommand(pos=pos)
 
     # CMD_JOIN
+    if cmd == CMD_JOIN:
+        username = _parse_username(data.get("username"))
+        if isinstance(username, ProtocolError):
+            return username
+        return JoinCommand(username=username)
+
+    if cmd == CMD_LOGIN:
+        username = _parse_username(data.get("username"))
+        if isinstance(username, ProtocolError):
+            return username
+        password = _parse_password(data.get("password"))
+        if isinstance(password, ProtocolError):
+            return password
+        return LoginCommand(username=username, password=password)
+
+    # CMD_REGISTER
     username = _parse_username(data.get("username"))
     if isinstance(username, ProtocolError):
         return username
-    return JoinCommand(username=username)
+    password = _parse_password(data.get("password"))
+    if isinstance(password, ProtocolError):
+        return password
+    return RegisterCommand(username=username, password=password)

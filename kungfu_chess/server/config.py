@@ -7,11 +7,25 @@ _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "server.json"
 
 _DEFAULTS = {"host": "localhost", "port": 8765}
 
+_AUTH_DEFAULTS = {
+    "default_starting_elo": 1200,
+    "elo_k_factor": 32,
+    "sqlite_db_path": "kungfu_chess.db",
+}
+
+
+@dataclass(frozen=True)
+class AuthConfig:
+    default_starting_elo: int
+    elo_k_factor: int
+    sqlite_db_path: str
+
 
 @dataclass(frozen=True)
 class ServerConfig:
     host: str
     port: int
+    auth: AuthConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -22,4 +36,13 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
     except FileNotFoundError:
         data = {}
     merged = {**_DEFAULTS, **data}
-    return ServerConfig(host=merged["host"], port=merged["port"])
+    auth_raw = {**_AUTH_DEFAULTS, **data.get("auth", {})}
+    return ServerConfig(
+        host=merged["host"],
+        port=merged["port"],
+        auth=AuthConfig(
+            default_starting_elo=auth_raw["default_starting_elo"],
+            elo_k_factor=auth_raw["elo_k_factor"],
+            sqlite_db_path=auth_raw["sqlite_db_path"],
+        ),
+    )
