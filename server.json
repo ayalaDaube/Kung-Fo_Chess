@@ -1,4 +1,7 @@
 {
     "host": "localhost",
-    "port": 8765
+    "port": 8765,
+    "realtime": {
+        "tick_interval_ms": 50
+    }
 }

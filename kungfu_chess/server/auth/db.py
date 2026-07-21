@@ -70,6 +70,7 @@ class SqliteUserRepository:
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     username      TEXT PRIMARY KEY,

@@ -22,7 +22,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# Minimal board: one white pawn at (6,4), one black pawn at (1,4)
 _MINIMAL_BOARD = """\
 . . . . bK . . .
 . . . . bP . . .
@@ -73,19 +72,40 @@ class TestSessionFull(unittest.TestCase):
 
     def test_not_full_initially(self):
         session, _ = _make_session()
-        self.assertFalse(session.is_full())
+        self.assertFalse(session.players_full())
 
     def test_full_after_two_connections(self):
         session, _ = _make_session()
         session.assign_color("conn-1")
         session.assign_color("conn-2")
-        self.assertTrue(session.is_full())
+        self.assertTrue(session.players_full())
+
+
+class TestSpectators(unittest.TestCase):
+
+    def test_spectator_added(self):
+        session, _ = _make_session()
+        session.add_spectator("spec-1")
+        self.assertTrue(session.is_spectator("spec-1"))
+
+    def test_player_is_not_spectator(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        self.assertFalse(session.is_spectator("conn-1"))
+
+    def test_spectator_owns_no_piece(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        session.assign_color("conn-2")
+        session.add_spectator("spec-1")
+        self.assertFalse(session.owns_piece_at("spec-1", Position(6, 4)))
 
 
 class TestRecordJoin(unittest.TestCase):
 
     def test_stores_username(self):
         session, _ = _make_session()
+        session.assign_color("conn-1")
         run(session.record_join("conn-1", "alice"))
         self.assertEqual(session.username_for("conn-1"), "alice")
 
@@ -95,12 +115,65 @@ class TestRecordJoin(unittest.TestCase):
 
     def test_publishes_player_joined(self):
         session, bus = _make_session()
+        session.assign_color("conn-1")
         received = []
         bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
         run(session.record_join("conn-1", "alice"))
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0]["username"], "alice")
         self.assertEqual(received[0]["conn_id"], "conn-1")
+
+    def test_player_joined_payload_includes_game_id(self):
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="room-42")
+        session.assign_color("conn-1")
+        received = []
+        bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
+        run(session.record_join("conn-1", "alice"))
+        self.assertEqual(received[0]["game_id"], "room-42")
+
+
+class TestReconnect(unittest.TestCase):
+
+    def test_reconnect_rebinds_to_existing_record(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        # alice reconnects with a new connection_id
+        run(session.record_join("conn-new", "alice"))
+        self.assertEqual(session.username_for("conn-new"), "alice")
+        self.assertIsNone(session.username_for("conn-1"))
+
+    def test_reconnect_preserves_color(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        run(session.record_join("conn-new", "alice"))
+        self.assertEqual(session.color_for("conn-new"), PieceColor.WHITE)
+
+    def test_reconnect_does_not_duplicate_player(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        run(session.record_join("conn-new", "alice"))
+        # still only one player record for alice
+        self.assertEqual(
+            sum(1 for u in ["alice"] if session.color_for("conn-new") is not None), 1
+        )
+
+
+class TestIdentityResolver(unittest.TestCase):
+
+    def test_custom_resolver_is_applied(self):
+        bus = EventBus()
+        session = GameSession(
+            bus=bus,
+            engine_factory=_make_engine,
+            identity_resolver=lambda name: name.lower(),
+        )
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "ALICE"))
+        self.assertEqual(session.username_for("conn-1"), "alice")
 
 
 class TestOwnsPieceAt(unittest.TestCase):
@@ -130,6 +203,7 @@ class TestHandleCommand(unittest.TestCase):
 
     def test_handle_command_join_routes_to_record_join(self):
         session, bus = _make_session()
+        session.assign_color("conn-1")
         received = []
         bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
         run(session.handle_command("conn-1", JoinCommand(username="bob")))
@@ -141,87 +215,128 @@ class TestHandleCommand(unittest.TestCase):
         session.assign_color("conn-1")
         received = []
         bus.subscribe(topics.SNAPSHOT, lambda s: received.append(s))
-
         cmd = MoveCommand(from_pos=Position(6, 4), to_pos=Position(4, 4))
         result, snapshot = run(session.handle_command("conn-1", cmd))
-
         self.assertTrue(result.is_accepted)
         self.assertEqual(len(received), 1)
+
+    def test_valid_move_publishes_snapshot_with_game_id(self):
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-snap")
+        session.assign_color("conn-1")
+        received = []
+        bus.subscribe(topics.SNAPSHOT, lambda s: received.append(s))
+        run(session.handle_command("conn-1", MoveCommand(from_pos=Position(6, 4), to_pos=Position(4, 4))))
+        self.assertEqual(received[0]["game_id"], "g-snap")
 
     def test_valid_move_publishes_move_accepted(self):
         session, bus = _make_session()
         session.assign_color("conn-1")
         accepted = []
         bus.subscribe(topics.MOVE_ACCEPTED, lambda r: accepted.append(r))
-
         cmd = MoveCommand(from_pos=Position(6, 4), to_pos=Position(4, 4))
         run(session.handle_command("conn-1", cmd))
-
         self.assertEqual(len(accepted), 1)
+
+    def test_valid_move_accepted_includes_game_id(self):
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-ma")
+        session.assign_color("conn-1")
+        accepted = []
+        bus.subscribe(topics.MOVE_ACCEPTED, lambda r: accepted.append(r))
+        run(session.handle_command("conn-1", MoveCommand(from_pos=Position(6, 4), to_pos=Position(4, 4))))
+        self.assertEqual(accepted[0]["game_id"], "g-ma")
 
     def test_invalid_move_publishes_move_rejected(self):
         session, bus = _make_session()
         session.assign_color("conn-1")
         rejected = []
         bus.subscribe(topics.MOVE_REJECTED, lambda r: rejected.append(r))
-
         cmd = MoveCommand(from_pos=Position(6, 4), to_pos=Position(6, 4))
         result, _ = run(session.handle_command("conn-1", cmd))
-
         self.assertFalse(result.is_accepted)
         self.assertEqual(len(rejected), 1)
+
+    def test_invalid_move_rejected_includes_game_id(self):
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-mr")
+        session.assign_color("conn-1")
+        rejected = []
+        bus.subscribe(topics.MOVE_REJECTED, lambda r: rejected.append(r))
+        run(session.handle_command("conn-1", MoveCommand(from_pos=Position(6, 4), to_pos=Position(6, 4))))
+        self.assertEqual(rejected[0]["game_id"], "g-mr")
 
     def test_valid_jump_publishes_jump_accepted(self):
         session, bus = _make_session()
         session.assign_color("conn-1")
         accepted = []
         bus.subscribe(topics.JUMP_ACCEPTED, lambda r: accepted.append(r))
-
         cmd = JumpCommand(pos=Position(6, 4))
         result, _ = run(session.handle_command("conn-1", cmd))
-
         self.assertTrue(result.is_accepted)
         self.assertEqual(len(accepted), 1)
+
+    def test_valid_jump_accepted_includes_game_id(self):
+        bus = EventBus()
+        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-ja")
+        session.assign_color("conn-1")
+        accepted = []
+        bus.subscribe(topics.JUMP_ACCEPTED, lambda r: accepted.append(r))
+        run(session.handle_command("conn-1", JumpCommand(pos=Position(6, 4))))
+        self.assertEqual(accepted[0]["game_id"], "g-ja")
 
 
 class TestHandleCommandSnapshot(unittest.TestCase):
 
     def test_captured_piece_excluded_from_snapshot(self):
-        """After a king capture, the captured king must not appear in the snapshot."""
         board = BoardParser().parse("wR bK")
         engine = GameEngine(board=board, rule_engine=RuleEngine(),
                             arbiter=RealTimeArbiter(ms_per_square=500))
         bus = EventBus()
         session = GameSession(bus=bus, engine_factory=lambda: engine)
         session.assign_color("conn-1")
-
         cmd = MoveCommand(from_pos=Position(0, 0), to_pos=Position(0, 1))
         run(session.handle_command("conn-1", cmd))
-        engine.wait(1000)  # piece arrives and captures king
-
+        engine.wait(1000)
         snapshot = session.build_snapshot()
-        kinds = [p.kind for p in snapshot.pieces]
         from kungfu_chess.model.piece import PieceKind
-        self.assertNotIn(PieceKind.KING, kinds)
+        self.assertNotIn(PieceKind.KING, [p.kind for p in snapshot.pieces])
         self.assertEqual(len(snapshot.pieces), 1)
 
     def test_scores_populated_when_stats_wired_in(self):
-        """engine.snapshot(stats=tracker) must reflect captured piece scores."""
         from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
         _SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
-
         board = BoardParser().parse("wR bP")
         engine = GameEngine(board=board, rule_engine=RuleEngine(),
                             arbiter=RealTimeArbiter(ms_per_square=500))
         tracker = GameStatsTracker(board_height=board.height, piece_scores=_SCORES)
-
         engine.request_move(Position(0, 0), Position(0, 1))
         events = engine.wait(1000)
         tracker.process(events, 1000)
-
         snapshot = engine.snapshot(stats=tracker)
-        from kungfu_chess.model.piece import PieceColor
         self.assertEqual(snapshot.scores[PieceColor.WHITE], 1)
+
+
+class TestTwoSessionsIsolated(unittest.TestCase):
+
+    def test_move_in_one_room_does_not_affect_other(self):
+        """A move command in session A must not change session B's state at all."""
+        session_a, _ = _make_session()
+        session_b, _ = _make_session()
+        session_a.assign_color("conn-a")
+        session_b.assign_color("conn-b")
+
+        snap_b_before = session_b.build_snapshot()
+
+        cmd = MoveCommand(from_pos=Position(6, 4), to_pos=Position(4, 4))
+        run(session_a.handle_command("conn-a", cmd))
+
+        snap_b_after = session_b.build_snapshot()
+
+        # B's pieces are completely unchanged
+        positions_before = {(p.cell.row, p.cell.col) for p in snap_b_before.pieces}
+        positions_after  = {(p.cell.row, p.cell.col) for p in snap_b_after.pieces}
+        self.assertEqual(positions_before, positions_after)
 
 
 if __name__ == "__main__":

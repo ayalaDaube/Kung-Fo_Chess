@@ -18,6 +18,9 @@ CMD_JUMP: Final = "jump"
 CMD_JOIN: Final = "join"
 CMD_LOGIN:    Final = "login"
 CMD_REGISTER: Final = "register"
+CMD_CREATE_ROOM: Final = "create_room"
+CMD_JOIN_ROOM:   Final = "join_room"
+CMD_CANCEL_ROOM: Final = "cancel_room"
 
 # ── server→client message type constants ─────────────────────────────────────
 MSG_ASSIGNED:   Final = "assigned"
@@ -26,8 +29,14 @@ MSG_SNAPSHOT:   Final = "snapshot"
 MSG_ERROR:      Final = "error"
 MSG_LOGGED_IN:  Final = "logged_in"
 MSG_REGISTERED: Final = "registered"
+MSG_ROOM_CREATED: Final = "room_created"
+MSG_ROOM_JOINED:  Final = "room_joined"
+MSG_ROOM_CANCELLED: Final = "room_cancelled"
 
-_KNOWN_COMMANDS: frozenset[str] = frozenset({CMD_MOVE, CMD_JUMP, CMD_JOIN, CMD_LOGIN, CMD_REGISTER})
+_KNOWN_COMMANDS: frozenset[str] = frozenset({
+    CMD_MOVE, CMD_JUMP, CMD_JOIN, CMD_LOGIN, CMD_REGISTER,
+    CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
+})
 
 _USERNAME_MAX_LEN = USERNAME_MAX_LEN
 _PASSWORD_MAX_LEN = PASSWORD_MAX_LEN
@@ -63,11 +72,31 @@ class RegisterCommand:
 
 
 @dataclass(frozen=True)
+class CreateRoomCommand:
+    room_id: str = ""   # empty = server assigns
+
+
+@dataclass(frozen=True)
+class JoinRoomCommand:
+    room_id: str
+    username: str = ""   # resolved before role assignment; empty = anonymous/spectator-only
+
+
+@dataclass(frozen=True)
+class CancelRoomCommand:
+    room_id: str
+
+
+@dataclass(frozen=True)
 class ProtocolError:
     reason: str
 
 
-Command = Union[MoveCommand, JumpCommand, JoinCommand, LoginCommand, RegisterCommand]
+Command = Union[
+    MoveCommand, JumpCommand, JoinCommand,
+    LoginCommand, RegisterCommand,
+    CreateRoomCommand, JoinRoomCommand, CancelRoomCommand,
+]
 ParseResult = Union[Command, ProtocolError]
 
 
@@ -146,11 +175,34 @@ def parse_incoming_message(raw: str) -> ParseResult:
             return password
         return LoginCommand(username=username, password=password)
 
-    # CMD_REGISTER
-    username = _parse_username(data.get("username"))
-    if isinstance(username, ProtocolError):
-        return username
-    password = _parse_password(data.get("password"))
-    if isinstance(password, ProtocolError):
-        return password
-    return RegisterCommand(username=username, password=password)
+    if cmd == CMD_REGISTER:
+        username = _parse_username(data.get("username"))
+        if isinstance(username, ProtocolError):
+            return username
+        password = _parse_password(data.get("password"))
+        if isinstance(password, ProtocolError):
+            return password
+        return RegisterCommand(username=username, password=password)
+
+    if cmd == CMD_CREATE_ROOM:
+        room_id = data.get("room_id", "")
+        if not isinstance(room_id, str):
+            return ProtocolError("'room_id' must be a string")
+        return CreateRoomCommand(room_id=room_id)
+
+    if cmd == CMD_JOIN_ROOM:
+        room_id = data.get("room_id", "")
+        if not isinstance(room_id, str) or not room_id:
+            return ProtocolError("'room_id' must be a non-empty string")
+        raw_username = data.get("username", "")
+        if not isinstance(raw_username, str):
+            return ProtocolError("'username' must be a string")
+        if raw_username and len(raw_username) > _USERNAME_MAX_LEN:
+            return ProtocolError(f"'username' must be at most {_USERNAME_MAX_LEN} characters")
+        return JoinRoomCommand(room_id=room_id, username=raw_username.strip())
+
+    # CMD_CANCEL_ROOM
+    room_id = data.get("room_id", "")
+    if not isinstance(room_id, str) or not room_id:
+        return ProtocolError("'room_id' must be a non-empty string")
+    return CancelRoomCommand(room_id=room_id)
