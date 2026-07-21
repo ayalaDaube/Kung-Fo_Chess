@@ -15,7 +15,7 @@ from kungfu_chess.io.board_parser import BoardParser
 from kungfu_chess.realtime.real_time_arbiter import RealTimeArbiter
 from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.bus.event_bus import EventBus
-from kungfu_chess.server.config import RealtimeConfig
+from kungfu_chess.server.config import RealtimeConfig, load_server_config as _load_cfg
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
     CMD_CREATE_ROOM, CMD_JOIN_ROOM,
@@ -46,7 +46,7 @@ def _make_engine() -> GameEngine:
 def _make_router() -> ConnectionRouter:
     return ConnectionRouter(
         session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
-        realtime_config=RealtimeConfig(tick_interval_ms=50),
+        realtime_config=RealtimeConfig(tick_interval_ms=50, auto_resign_ms=_load_cfg().realtime.auto_resign_ms),
     )
 
 

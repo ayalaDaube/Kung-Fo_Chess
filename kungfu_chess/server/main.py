@@ -29,6 +29,7 @@ async def _main() -> None:
         session_factory=_session_factory,
         realtime_config=config.realtime,
         auth_service=auth_service,
+        matchmaking_config=config.matchmaking,
     )
 
     async with websockets.serve(router.handle, config.host, config.port):

@@ -20,6 +20,8 @@ CMD_REGISTER: Final = "register"
 CMD_CREATE_ROOM: Final = "create_room"
 CMD_JOIN_ROOM:   Final = "join_room"
 CMD_CANCEL_ROOM: Final = "cancel_room"
+CMD_FIND_MATCH:   Final = "find_match"
+CMD_CANCEL_MATCH: Final = "cancel_match"
 
 # ── server→client message type constants ─────────────────────────────────────
 MSG_ASSIGNED:   Final = "assigned"
@@ -30,10 +32,13 @@ MSG_REGISTERED: Final = "registered"
 MSG_ROOM_CREATED: Final = "room_created"
 MSG_ROOM_JOINED:  Final = "room_joined"
 MSG_ROOM_CANCELLED: Final = "room_cancelled"
+MSG_MATCH_FOUND:  Final = "match_found"
+MSG_MATCH_TIMEOUT: Final = "match_timeout"
 
 _KNOWN_COMMANDS: frozenset[str] = frozenset({
     CMD_MOVE, CMD_JUMP, CMD_LOGIN, CMD_REGISTER,
     CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
+    CMD_FIND_MATCH, CMD_CANCEL_MATCH,
 })
 
 _USERNAME_MAX_LEN = USERNAME_MAX_LEN
@@ -81,6 +86,16 @@ class CancelRoomCommand:
 
 
 @dataclass(frozen=True)
+class FindMatchCommand:
+    pass
+
+
+@dataclass(frozen=True)
+class CancelMatchCommand:
+    pass
+
+
+@dataclass(frozen=True)
 class ProtocolError:
     reason: str
 
@@ -89,6 +104,7 @@ Command = Union[
     MoveCommand, JumpCommand,
     LoginCommand, RegisterCommand,
     CreateRoomCommand, JoinRoomCommand, CancelRoomCommand,
+    FindMatchCommand, CancelMatchCommand,
 ]
 ParseResult = Union[Command, ProtocolError]
 
@@ -187,8 +203,18 @@ def parse_incoming_message(raw: str) -> ParseResult:
             return ProtocolError(f"'username' must be at most {_USERNAME_MAX_LEN} characters")
         return JoinRoomCommand(room_id=room_id, username=raw_username.strip())
 
+    if cmd in (CMD_FIND_MATCH, CMD_CANCEL_MATCH):
+        return _parse_no_fields(cmd, data)
+
     # CMD_CANCEL_ROOM
     room_id = data.get("room_id", "")
     if not isinstance(room_id, str) or not room_id:
         return ProtocolError("'room_id' must be a non-empty string")
     return CancelRoomCommand(room_id=room_id)
+
+
+def _parse_no_fields(cmd: str, raw_data: dict) -> FindMatchCommand | CancelMatchCommand:
+    # Both find_match and cancel_match carry no fields.
+    if cmd == CMD_FIND_MATCH:
+        return FindMatchCommand()
+    return CancelMatchCommand()

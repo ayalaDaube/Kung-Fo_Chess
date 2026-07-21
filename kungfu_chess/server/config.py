@@ -15,6 +15,14 @@ _AUTH_DEFAULTS = {
 
 _REALTIME_DEFAULTS = {
     "tick_interval_ms": 50,
+    "auto_resign_ms": 20000,
+}
+
+_MATCHMAKING_DEFAULTS = {
+    "elo_range": 100,
+    "elo_widen_step": 50,
+    "widen_interval_ms": 5000,
+    "timeout_ms": 60000,
 }
 
 
@@ -28,6 +36,15 @@ class AuthConfig:
 @dataclass(frozen=True)
 class RealtimeConfig:
     tick_interval_ms: int
+    auto_resign_ms: int
+
+
+@dataclass(frozen=True)
+class MatchmakingConfig:
+    elo_range: int
+    elo_widen_step: int
+    widen_interval_ms: int
+    timeout_ms: int
 
 
 @dataclass(frozen=True)
@@ -36,6 +53,7 @@ class ServerConfig:
     port: int
     auth: AuthConfig
     realtime: RealtimeConfig
+    matchmaking: MatchmakingConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -48,6 +66,7 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
     merged = {**_DEFAULTS, **data}
     auth_raw = {**_AUTH_DEFAULTS, **data.get("auth", {})}
     realtime_raw = {**_REALTIME_DEFAULTS, **data.get("realtime", {})}
+    mm_raw = {**_MATCHMAKING_DEFAULTS, **data.get("matchmaking", {})}
     return ServerConfig(
         host=merged["host"],
         port=merged["port"],
@@ -58,5 +77,12 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
         ),
         realtime=RealtimeConfig(
             tick_interval_ms=realtime_raw["tick_interval_ms"],
+            auto_resign_ms=realtime_raw["auto_resign_ms"],
+        ),
+        matchmaking=MatchmakingConfig(
+            elo_range=mm_raw["elo_range"],
+            elo_widen_step=mm_raw["elo_widen_step"],
+            widen_interval_ms=mm_raw["widen_interval_ms"],
+            timeout_ms=mm_raw["timeout_ms"],
         ),
     )

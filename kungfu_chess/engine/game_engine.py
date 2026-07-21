@@ -64,6 +64,10 @@ class GameEngine:
         self._game_over = False
         self._selected_cell: Optional[Position] = None
 
+    def force_game_over(self) -> None:
+        """Force the game-over flag without a capture — used by resignation."""
+        self._game_over = True
+
     @property
     def game_over(self) -> bool:
         return self._game_over

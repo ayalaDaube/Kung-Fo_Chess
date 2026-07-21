@@ -171,6 +171,47 @@ class GameSession:
         await self._bus.publish(topics.SNAPSHOT, {"game_id": self.game_id, "snapshot": snapshot})
         return result, snapshot
 
+    # ── resign ─────────────────────────────────────────────────────────────────
+
+    async def resign(self, username: str) -> GameSnapshot:
+        """
+        End the game by resignation.  Marks the engine as game-over, publishes
+        GAME_ENDED with winner/loser, and returns the final snapshot.
+        The caller is responsible for ELO updates.
+        """
+        winner_username = next(
+            (u for u, r in self._players.items() if u != username), None
+        )
+        self._engine.force_game_over()
+        await self._bus.publish(topics.GAME_ENDED, {
+            "game_id": self.game_id,
+            "winner": winner_username,
+            "loser": username,
+        })
+        return self._engine.snapshot()
+
+    # ── disconnect/reconnect bus helpers ──────────────────────────────────────
+
+    async def publish_disconnected(self, room_id: str, username: str, conn_id: str) -> None:
+        """Publish PLAYER_DISCONNECTED on this session's bus."""
+        await self._bus.publish(topics.PLAYER_DISCONNECTED, {
+            "game_id": room_id,
+            "username": username,
+            "conn_id": conn_id,
+        })
+
+    async def publish_reconnected(self, room_id: str, username: str, conn_id: str) -> None:
+        """Publish PLAYER_RECONNECTED on this session's bus."""
+        await self._bus.publish(topics.PLAYER_RECONNECTED, {
+            "game_id": room_id,
+            "username": username,
+            "conn_id": conn_id,
+        })
+
+    def other_player_username(self, username: str) -> Optional[str]:
+        """Return the opponent's username, or None if not found."""
+        return next((u for u in self._players if u != username), None)
+
     # ── engine access ─────────────────────────────────────────────────────────
 
     def tick(self, ms: int) -> list:

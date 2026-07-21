@@ -15,7 +15,8 @@ from kungfu_chess.rules.rule_engine import RuleEngine
 from kungfu_chess.server.auth.auth_service import AuthService
 from kungfu_chess.server.auth.db import InMemoryUserRepository
 from kungfu_chess.server.bus.event_bus import EventBus
-from kungfu_chess.server.config import AuthConfig, RealtimeConfig
+from kungfu_chess.server.config import AuthConfig, MatchmakingConfig, RealtimeConfig, load_server_config as _load_cfg
+from kungfu_chess.server.matchmaking.matchmaker import Matchmaker
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
     CMD_MOVE, CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_CANCEL_ROOM,
@@ -43,7 +44,10 @@ _MINIMAL_BOARD = """\
 """
 
 _AUTH_CONFIG = AuthConfig(default_starting_elo=1200, elo_k_factor=32, sqlite_db_path=":memory:")
-_RT_CONFIG = RealtimeConfig(tick_interval_ms=50)
+_RT_CONFIG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=_load_cfg().realtime.auto_resign_ms)
+# Short auto_resign_ms for tests that exercise the resign/room-cleanup path.
+_RT_CONFIG_FAST_RESIGN = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=50)
+_MM_CFG = MatchmakingConfig(elo_range=500, elo_widen_step=50, widen_interval_ms=20, timeout_ms=5000)
 
 
 class FakeWebSocket:
@@ -87,6 +91,21 @@ def _make_router(auth=None) -> ConnectionRouter:
 def _make_router_with_auth() -> tuple[ConnectionRouter, AuthService]:
     auth = AuthService(repo=InMemoryUserRepository(), config=_AUTH_CONFIG)
     return _make_router(auth=auth), auth
+
+
+def _make_router_with_matchmaking() -> ConnectionRouter:
+    counter = [0]
+
+    def _room_id_gen():
+        counter[0] += 1
+        return f"room-{counter[0]}"
+
+    return ConnectionRouter(
+        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        realtime_config=_RT_CONFIG_FAST_RESIGN,
+        room_id_generator=_room_id_gen,
+        matchmaking_config=_MM_CFG,
+    )
 
 
 def _msg(**kwargs) -> str:
@@ -355,6 +374,106 @@ class TestReconnect(unittest.TestCase):
 
         session, conn_id = run(_go())
         self.assertFalse(session.is_spectator(conn_id))
+
+
+class TestAutoResignRoomCleanup(unittest.TestCase):
+    """
+    FIX 3e: after auto-resign fires, the room's TickLoop must be stopped
+    and the room must no longer appear in room_ids().
+    Uses _RT_CONFIG_FAST_RESIGN (auto_resign_ms=50) so the timer fires quickly.
+    """
+
+    def test_room_removed_after_auto_resign(self):
+        async def _go():
+            router = ConnectionRouter(
+                session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+                realtime_config=_RT_CONFIG_FAST_RESIGN,
+                room_id_generator=lambda: "resign-room",
+            )
+            rid = await router.create_room()
+            # alice joins
+            ws_alice = FakeWebSocket(messages=[_msg(cmd=CMD_JOIN_ROOM, room_id=rid, username="alice")])
+            ws_bob   = FakeWebSocket(messages=[_msg(cmd=CMD_JOIN_ROOM, room_id=rid, username="bob")])
+            await router.handle(ws_alice)
+            await router.handle(ws_bob)
+
+            # alice disconnects — triggers DisconnectMonitor
+            await router._on_disconnect(str(id(ws_alice)))
+
+            # wait past auto_resign_ms=50
+            await asyncio.sleep(0.15)
+
+            self.assertNotIn(rid, router.room_ids())
+
+        run(_go())
+
+    def test_snapshot_game_over_true_after_resign(self):
+        async def _go():
+            router = ConnectionRouter(
+                session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+                realtime_config=_RT_CONFIG_FAST_RESIGN,
+                room_id_generator=lambda: "resign-room-2",
+            )
+            rid = await router.create_room()
+            ws_alice = FakeWebSocket(messages=[_msg(cmd=CMD_JOIN_ROOM, room_id=rid, username="alice")])
+            ws_bob   = FakeWebSocket(messages=[_msg(cmd=CMD_JOIN_ROOM, room_id=rid, username="bob")])
+            await router.handle(ws_alice)
+            await router.handle(ws_bob)
+
+            session = router.session_for(rid)
+            game_ended: list[dict] = []
+            from kungfu_chess.server.bus import topics as _topics
+            session._bus.subscribe(_topics.GAME_ENDED, lambda p: game_ended.append(p))
+
+            await router._on_disconnect(str(id(ws_alice)))
+            await asyncio.sleep(0.15)
+
+            self.assertEqual(len(game_ended), 1)
+            # snapshot built inside resign() must have game_over=True
+            snapshot = session.build_snapshot()
+            self.assertTrue(snapshot.game_over)
+
+        run(_go())
+
+
+class TestMatchmakingDisconnectCleansQueue(unittest.TestCase):
+    """
+    FIX 4: a player who disconnects while queued (before being matched)
+    must be removed from the Matchmaker queue.
+    """
+
+    def test_queued_player_removed_on_disconnect(self):
+        async def _go():
+            router = _make_router_with_matchmaking()
+            # Simulate a logged-in connection that has sent find_match
+            ws = FakeWebSocket(messages=[])
+            conn_id = str(id(ws))
+            router._connections[conn_id] = ws
+            router._logged_in[conn_id] = ("alice", 1200)
+            router._matchmaker.enqueue("alice", 1200, conn_id, 0)
+
+            self.assertEqual(router._matchmaker.queue_size(), 1)
+
+            # alice disconnects before being matched (not in any room)
+            await router._on_disconnect(conn_id)
+
+            self.assertEqual(router._matchmaker.queue_size(), 0)
+
+        run(_go())
+
+    def test_non_queued_disconnect_does_not_raise(self):
+        """Disconnect of a logged-in but non-queued connection must be a no-op."""
+        async def _go():
+            router = _make_router_with_matchmaking()
+            ws = FakeWebSocket(messages=[])
+            conn_id = str(id(ws))
+            router._connections[conn_id] = ws
+            router._logged_in[conn_id] = ("alice", 1200)
+            # NOT enqueued
+            await router._on_disconnect(conn_id)  # must not raise
+            self.assertEqual(router._matchmaker.queue_size(), 0)
+
+        run(_go())
 
 
 if __name__ == "__main__":

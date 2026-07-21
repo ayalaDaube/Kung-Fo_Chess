@@ -330,5 +330,68 @@ class TestTwoSessionsIsolated(unittest.TestCase):
         self.assertEqual(positions_before, positions_after)
 
 
+class TestResign(unittest.TestCase):
+
+    def test_resign_sets_game_over_on_snapshot(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        session.assign_color("conn-2")
+        run(session.record_join("conn-2", "bob"))
+        snapshot = run(session.resign("alice"))
+        self.assertTrue(snapshot.game_over)
+
+    def test_resign_publishes_game_ended(self):
+        session, bus = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        session.assign_color("conn-2")
+        run(session.record_join("conn-2", "bob"))
+        events: list[dict] = []
+        bus.subscribe(topics.GAME_ENDED, lambda p: events.append(p))
+        run(session.resign("alice"))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["loser"], "alice")
+        self.assertEqual(events[0]["winner"], "bob")
+
+
+class TestPublicBusMethods(unittest.TestCase):
+
+    def test_publish_disconnected_fires_event(self):
+        session, bus = _make_session()
+        received: list[dict] = []
+        bus.subscribe(topics.PLAYER_DISCONNECTED, lambda p: received.append(p))
+        run(session.publish_disconnected("room-1", "alice", "conn-1"))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["username"], "alice")
+        self.assertEqual(received[0]["conn_id"], "conn-1")
+        self.assertEqual(received[0]["game_id"], "room-1")
+
+    def test_publish_reconnected_fires_event(self):
+        session, bus = _make_session()
+        received: list[dict] = []
+        bus.subscribe(topics.PLAYER_RECONNECTED, lambda p: received.append(p))
+        run(session.publish_reconnected("room-1", "alice", "conn-2"))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["username"], "alice")
+        self.assertEqual(received[0]["conn_id"], "conn-2")
+        self.assertEqual(received[0]["game_id"], "room-1")
+
+    def test_other_player_username_returns_opponent(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        session.assign_color("conn-2")
+        run(session.record_join("conn-2", "bob"))
+        self.assertEqual(session.other_player_username("alice"), "bob")
+        self.assertEqual(session.other_player_username("bob"), "alice")
+
+    def test_other_player_username_returns_none_when_solo(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        self.assertIsNone(session.other_player_username("alice"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

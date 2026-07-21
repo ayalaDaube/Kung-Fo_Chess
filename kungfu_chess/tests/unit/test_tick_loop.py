@@ -21,7 +21,6 @@ class FakeSession:
         return []
 
     def build_snapshot(self):
-        # Return a minimal object that _snapshot_to_json can handle
         from kungfu_chess.model.game_state import GameSnapshot
         return GameSnapshot(
             board_width=8, board_height=8,
@@ -34,6 +33,13 @@ def run(coro):
     return asyncio.run(coro)
 
 
+from kungfu_chess.server.config import load_server_config as _load
+_DEFAULT_AUTO_RESIGN_MS = _load().realtime.auto_resign_ms
+
+_CFG_10  = RealtimeConfig(tick_interval_ms=10, auto_resign_ms=_DEFAULT_AUTO_RESIGN_MS)
+_CFG_20  = RealtimeConfig(tick_interval_ms=20, auto_resign_ms=_DEFAULT_AUTO_RESIGN_MS)
+
+
 class TestTickLoopLifecycle(unittest.TestCase):
 
     def test_not_running_before_start(self):
@@ -42,7 +48,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
         loop = TickLoop(
             session=session,
             broadcast=lambda msg: broadcasts.append(msg) or asyncio.sleep(0),
-            config=RealtimeConfig(tick_interval_ms=10),
+            config=_CFG_10,
         )
         self.assertFalse(loop.running)
 
@@ -52,11 +58,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): broadcasts.append(msg)
 
-        loop = TickLoop(
-            session=session,
-            broadcast=_broadcast,
-            config=RealtimeConfig(tick_interval_ms=10),
-        )
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
 
         async def _run():
             loop.start()
@@ -70,11 +72,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): pass
 
-        loop = TickLoop(
-            session=session,
-            broadcast=_broadcast,
-            config=RealtimeConfig(tick_interval_ms=10),
-        )
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
 
         async def _run():
             loop.start()
@@ -89,11 +87,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): pass
 
-        loop = TickLoop(
-            session=session,
-            broadcast=_broadcast,
-            config=RealtimeConfig(tick_interval_ms=10),
-        )
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
 
         async def _run():
             loop.start()
@@ -110,11 +104,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): broadcasts.append(msg)
 
-        loop = TickLoop(
-            session=session,
-            broadcast=_broadcast,
-            config=RealtimeConfig(tick_interval_ms=10),
-        )
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
 
         async def _run():
             loop.start()
@@ -130,11 +120,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): broadcasts.append(msg)
 
-        loop = TickLoop(
-            session=session,
-            broadcast=_broadcast,
-            config=RealtimeConfig(tick_interval_ms=10),
-        )
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
 
         async def _run():
             loop.start()
@@ -150,8 +136,7 @@ class TestTickLoopLifecycle(unittest.TestCase):
 
         async def _broadcast(msg): pass
 
-        config = RealtimeConfig(tick_interval_ms=20)
-        loop = TickLoop(session=session, broadcast=_broadcast, config=config)
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_20)
         self.assertAlmostEqual(loop._interval_s, 0.020, places=5)
 
 
