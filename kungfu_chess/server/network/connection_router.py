@@ -36,6 +36,7 @@ from kungfu_chess.server.network.protocol import (
     MSG_LOGGED_IN, MSG_REGISTERED,
     MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_ROOM_CANCELLED,
     MSG_MATCH_FOUND, MSG_MATCH_TIMEOUT,
+    MSG_OPPONENT_DISCONNECTED, MSG_OPPONENT_RECONNECTED,
 )
 from kungfu_chess.server.network.serialization import snapshot_to_json
 from kungfu_chess.server.session.disconnect_monitor import DisconnectMonitor
@@ -230,6 +231,10 @@ class ConnectionRouter:
             if monitor is not None:
                 monitor.cancel()
             await session.publish_reconnected(room_id, username, conn_id)
+            await self._send_to_others(room_id, conn_id, {
+                "type": MSG_OPPONENT_RECONNECTED,
+                "username": username,
+            })
             color = session.color_for(conn_id)
             await self._send(conn_id, {
                 "type": MSG_ROOM_JOINED,
@@ -338,6 +343,11 @@ class ConnectionRouter:
             return
 
         await session.publish_disconnected(room_id, username, conn_id)
+        await self._send_to_others(room_id, conn_id, {
+            "type": MSG_OPPONENT_DISCONNECTED,
+            "username": username,
+            "auto_resign_ms": self._realtime_config.auto_resign_ms,
+        })
 
         monitor_key = (room_id, username)
         if monitor_key not in self._disconnect_monitors:
@@ -391,6 +401,19 @@ class ConnectionRouter:
         ws = self._connections.get(conn_id)
         if ws:
             await ws.send(json.dumps(payload))
+
+    async def _send_to_others(self, room_id: str, exclude_conn_id: str, payload: dict) -> None:
+        """Send payload to every connection in room_id except exclude_conn_id."""
+        msg = json.dumps(payload)
+        for conn_id, rid in list(self._conn_to_room.items()):
+            if rid != room_id or conn_id == exclude_conn_id:
+                continue
+            ws = self._connections.get(conn_id)
+            if ws:
+                try:
+                    await ws.send(msg)
+                except Exception:
+                    logger.exception("Failed to send to %s", conn_id)
 
     async def _send_error(self, conn_id: str, reason: str) -> None:
         await self._send(conn_id, {"type": MSG_ERROR, "reason": reason})

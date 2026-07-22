@@ -45,6 +45,8 @@ class GameConfig:
     screen_fill_pct: int
     table_cells_wide: int
     window_title: str
+    frame_interval_ms: int
+    client_log_path: str
 
     @property
     def computed_ms_per_square(self) -> int:
@@ -103,6 +105,8 @@ def load_config(path: str = _CONFIG_PATH) -> GameConfig:
         "screen_fill_pct": 75,
         "table_cells_wide": 3,
         "window_title": "Kung-Fo Chess",
+        "frame_interval_ms": 16,
+        "client_log_path": "client.log",
     }
     try:
         with open(path, "r") as f:
@@ -152,4 +156,6 @@ def load_config(path: str = _CONFIG_PATH) -> GameConfig:
         screen_fill_pct=merged["screen_fill_pct"],
         table_cells_wide=merged["table_cells_wide"],
         window_title=merged["window_title"],
+        frame_interval_ms=merged["frame_interval_ms"],
+        client_log_path=merged["client_log_path"],
     )

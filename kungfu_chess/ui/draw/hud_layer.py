@@ -21,10 +21,13 @@ class HudLayer:
         self._game_over_font_size = ui.game_over_font_size if ui else 2.0
         self._game_over_thickness = ui.game_over_thickness if ui else 4
 
-    def draw(self, canvas: Img, snapshot: GameSnapshot, canvas_h: int) -> None:
+    def draw(self, canvas: Img, snapshot: GameSnapshot, canvas_h: int,
+             countdown_ms: int | None = None) -> None:
         self._draw_scores(canvas, snapshot)
         if snapshot.game_over:
             self._draw_game_over(canvas, canvas_h)
+        elif countdown_ms is not None:
+            self._draw_countdown(canvas, canvas_h, countdown_ms)
 
     def _draw_scores(self, canvas: Img, snapshot: GameSnapshot) -> None:
         cs         = self._cell_size
@@ -42,6 +45,14 @@ class HudLayer:
 
     def _draw_game_over(self, canvas: Img, canvas_h: int) -> None:
         canvas.put_text("GAME OVER", self._canvas_w // 6, canvas_h // 2,
+                        font_size=self._game_over_font_size,
+                        color=self._game_over_color,
+                        thickness=self._game_over_thickness)
+
+    def _draw_countdown(self, canvas: Img, canvas_h: int, countdown_ms: int) -> None:
+        secs = max(0, countdown_ms) // 1000
+        text = f"Opponent disconnected: {secs}s"
+        canvas.put_text(text, self._canvas_w // 6, canvas_h // 2,
                         font_size=self._game_over_font_size,
                         color=self._game_over_color,
                         thickness=self._game_over_thickness)

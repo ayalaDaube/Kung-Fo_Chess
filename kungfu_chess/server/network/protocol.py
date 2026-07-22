@@ -34,6 +34,8 @@ MSG_ROOM_JOINED:  Final = "room_joined"
 MSG_ROOM_CANCELLED: Final = "room_cancelled"
 MSG_MATCH_FOUND:  Final = "match_found"
 MSG_MATCH_TIMEOUT: Final = "match_timeout"
+MSG_OPPONENT_DISCONNECTED: Final = "opponent_disconnected"
+MSG_OPPONENT_RECONNECTED:  Final = "opponent_reconnected"
 
 _KNOWN_COMMANDS: frozenset[str] = frozenset({
     CMD_MOVE, CMD_JUMP, CMD_LOGIN, CMD_REGISTER,

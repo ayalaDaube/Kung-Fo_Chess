@@ -7,6 +7,10 @@ from kungfu_chess.engine.game_engine import GameEngine
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
 from kungfu_chess.config_loader import load_config
+from kungfu_chess.server.network.protocol import (
+    MoveCommand as ProtocolMoveCommand,
+    JumpCommand as ProtocolJumpCommand,
+)
 from kungfu_chess.texttests.script_parser import (
     ScriptParser, BoardCommand, ClickCommand, JumpCommand, WaitCommand, PrintBoardCommand,
 )
@@ -52,13 +56,20 @@ class ScriptRunner:
                 )
                 engine = GameEngine(board, rule_engine, arbiter)
                 mapper = BoardMapper(board.width, board.height, self._cell_size)
-                controller = Controller(mapper, engine)
+                controller = Controller(mapper, lambda: engine.snapshot())
 
             elif isinstance(cmd, ClickCommand):
-                controller.click(cmd.x, cmd.y)
+                result = controller.click(cmd.x, cmd.y)
+                if result.command is not None:
+                    if isinstance(result.command, ProtocolMoveCommand):
+                        engine.request_move(result.command.from_pos, result.command.to_pos)
+                    elif isinstance(result.command, ProtocolJumpCommand):
+                        engine.request_jump(result.command.pos)
 
             elif isinstance(cmd, JumpCommand):
-                controller.jump(cmd.x, cmd.y)
+                result = controller.jump(cmd.x, cmd.y)
+                if result.command is not None:
+                    engine.request_jump(result.command.pos)
 
             elif isinstance(cmd, WaitCommand):
                 engine.wait(cmd.ms)
