@@ -198,7 +198,7 @@ class TestMatchmakingEndToEnd(unittest.TestCase):
                 # Subscribe to GAME_ENDED on the session bus
                 session = router.session_for(rid)
                 from kungfu_chess.server.bus import topics
-                session._bus.subscribe(
+                session.subscribe(
                     topics.GAME_ENDED,
                     lambda p: game_ended_events.append(p),
                 )

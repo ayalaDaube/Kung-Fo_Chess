@@ -16,6 +16,7 @@ import json
 import logging
 from typing import Any, Callable
 
+from kungfu_chess.client.activity_logger import ClientActivityLogger
 from kungfu_chess.server.network.protocol import (
     CMD_LOGIN, CMD_REGISTER,
     CMD_FIND_MATCH, CMD_CANCEL_MATCH,
@@ -158,6 +159,7 @@ async def login_or_register(
     *,
     register: bool = False,
     write: WriteFn = print,
+    activity_logger: ClientActivityLogger | None = None,
 ) -> bool:
     """
     Send CMD_LOGIN or CMD_REGISTER and wait for the server's response.
@@ -165,27 +167,45 @@ async def login_or_register(
     Returns True on success, False on failure (wrong password, duplicate
     username, etc.).  Writes a human-readable message via ``write``.
     """
+    async def _log_sent(payload: dict) -> None:
+        # activity_logger.log() redacts "password" itself — safe to pass the
+        # raw outgoing payload straight through, same as the server side.
+        if activity_logger is not None:
+            await activity_logger.log("command_sent", payload)
+
+    async def _log_received(payload: dict) -> None:
+        if activity_logger is not None:
+            await activity_logger.log("message_received", payload)
+
     cmd = CMD_REGISTER if register else CMD_LOGIN
-    await ws.send(json.dumps({"cmd": cmd, "username": username, "password": password}))
+    payload = {"cmd": cmd, "username": username, "password": password}
+    await ws.send(json.dumps(payload))
+    await _log_sent(payload)
 
     try:
         msg = await _recv_until(ws, MSG_LOGGED_IN, MSG_REGISTERED)
     except ServerError as exc:
         write(f"Error: {exc.reason}")
         logger.warning("Auth failed for %r: %s", username, exc.reason)
+        await _log_received({"type": MSG_ERROR, "reason": exc.reason})
         return False
+    await _log_received(msg)
 
     if msg["type"] == MSG_REGISTERED:
         # Registration succeeded — server has already marked the connection as
         # logged in (Bug A fix), but we still need MSG_LOGGED_IN on the wire
         # so the client knows the ELO.  Send CMD_LOGIN immediately.
         logger.info("Registered as %r, auto-logging in", msg.get('username', username))
-        await ws.send(json.dumps({"cmd": CMD_LOGIN, "username": username, "password": password}))
+        login_payload = {"cmd": CMD_LOGIN, "username": username, "password": password}
+        await ws.send(json.dumps(login_payload))
+        await _log_sent(login_payload)
         try:
             msg = await _recv_until(ws, MSG_LOGGED_IN)
         except ServerError as exc:
             write(f"Error: {exc.reason}")
+            await _log_received({"type": MSG_ERROR, "reason": exc.reason})
             return False
+        await _log_received(msg)
 
     # MSG_LOGGED_IN
     elo_part = f"  ELO: {msg['elo']}" if "elo" in msg else ""
@@ -202,6 +222,7 @@ async def find_match_flow(
     write: WriteFn = print,
     cancel_event: asyncio.Event | None = None,
     recv_timeout_s: float = 120.0,
+    activity_logger: ClientActivityLogger | None = None,
 ) -> dict | None:
     """
     Send CMD_FIND_MATCH and wait for MSG_MATCH_FOUND or MSG_MATCH_TIMEOUT.
@@ -214,7 +235,20 @@ async def find_match_flow(
     MSG_MATCH_FOUND — previously discarded here, leaving the caller with no
     way to know which side it was assigned), None on timeout or cancel.
     """
-    await ws.send(json.dumps({"cmd": CMD_FIND_MATCH}))
+    async def _log_sent(payload: dict) -> None:
+        if activity_logger is not None:
+            await activity_logger.log("command_sent", payload)
+
+    def _log_received_fire_and_forget(payload: dict) -> None:
+        # Called from _capture_assigned, a synchronous callback, so this
+        # can't await — fire-and-forget the same way snapshot_receiver.py
+        # does from its own sync feed() method.
+        if activity_logger is not None:
+            asyncio.ensure_future(activity_logger.log("message_received", payload))
+
+    find_match_payload = {"cmd": CMD_FIND_MATCH}
+    await ws.send(json.dumps(find_match_payload))
+    await _log_sent(find_match_payload)
     write("Searching for an opponent… (press Enter to cancel)")
 
     if cancel_event is None:
@@ -226,6 +260,7 @@ async def find_match_flow(
         nonlocal assigned_color
         if other_msg.get("type") == MSG_ASSIGNED:
             assigned_color = other_msg.get("color")
+        _log_received_fire_and_forget(other_msg)
 
     async def _wait_for_match() -> dict | None:
         try:
@@ -237,6 +272,8 @@ async def find_match_flow(
         except ServerError as exc:
             write(f"Error: {exc.reason}")
             logger.warning("Match error: %s", exc.reason)
+            if activity_logger is not None:
+                await activity_logger.log("message_received", {"type": MSG_ERROR, "reason": exc.reason})
             return None
 
     async def _wait_for_cancel() -> None:
@@ -255,7 +292,9 @@ async def find_match_flow(
         await asyncio.gather(t, return_exceptions=True)
 
     if cancel_task in done:
-        await ws.send(json.dumps({"cmd": CMD_CANCEL_MATCH}))
+        cancel_payload = {"cmd": CMD_CANCEL_MATCH}
+        await ws.send(json.dumps(cancel_payload))
+        await _log_sent(cancel_payload)
         write("Match search cancelled.")
         return None
 
@@ -275,11 +314,15 @@ async def find_match_flow(
         )
         logger.info("Match found — room=%r opponent=%r color=%s",
                     msg['room_id'], msg.get('opponent', '?'), assigned_color)
+        if activity_logger is not None:
+            await activity_logger.log("message_received", msg)
         return {**msg, "color": assigned_color}
 
     # MSG_MATCH_TIMEOUT
     write("No opponent found — match timed out.")
     logger.info("Match search timed out")
+    if activity_logger is not None:
+        await activity_logger.log("message_received", msg)
     return None
 
 
@@ -291,6 +334,7 @@ async def room_flow(
     *,
     read: ReadFn = input,
     write: WriteFn = print,
+    activity_logger: ClientActivityLogger | None = None,
 ) -> tuple[str, str, str | None] | None:
     """
     Prompt for an optional room ID, then join (or create) a room on the
@@ -298,14 +342,25 @@ async def room_flow(
 
     Reuses the same WebSocket so the caller never needs a second connection.
     """
+    async def _log_sent(payload: dict) -> None:
+        if activity_logger is not None:
+            await activity_logger.log("command_sent", payload)
+
+    async def _log_received(payload: dict) -> None:
+        if activity_logger is not None:
+            await activity_logger.log("message_received", payload)
+
     write("Enter a room ID to join, or leave blank to create a new room:")
     raw = (await _read_line(read)).strip()
     room_id_hint = raw or None
 
     try:
         if room_id_hint is None:
-            await ws.send(json.dumps({"cmd": CMD_CREATE_ROOM}))
+            create_payload = {"cmd": CMD_CREATE_ROOM}
+            await ws.send(json.dumps(create_payload))
+            await _log_sent(create_payload)
             created = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+            await _log_received(created)
             if created.get("type") != MSG_ROOM_CREATED:
                 write(f"Could not create room: {created}")
                 return None
@@ -313,8 +368,11 @@ async def room_flow(
         else:
             room_id = room_id_hint
 
-        await ws.send(json.dumps({"cmd": CMD_JOIN_ROOM, "room_id": room_id, "username": username}))
+        join_payload = {"cmd": CMD_JOIN_ROOM, "room_id": room_id, "username": username}
+        await ws.send(json.dumps(join_payload))
+        await _log_sent(join_payload)
         joined = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+        await _log_received(joined)
         if joined.get("type") != MSG_ROOM_JOINED:
             write(f"Could not join room: {joined}")
             return None
@@ -323,6 +381,7 @@ async def room_flow(
         color: str | None = None
         if role == "player":
             assigned = json.loads(await asyncio.wait_for(ws.recv(), timeout=10.0))
+            await _log_received(assigned)
             if assigned.get("type") == MSG_ASSIGNED:
                 color = assigned["color"]
 
@@ -348,6 +407,7 @@ async def run_pregame(
     getpass_fn: Callable[[str], str] | None = None,
     cancel_match_event: asyncio.Event | None = None,
     recv_timeout_s: float = 120.0,
+    activity_logger: ClientActivityLogger | None = None,
 ) -> tuple[WS, str, str, str | None] | None:
     """
     Full pre-game flow on a single WebSocket connection:
@@ -359,7 +419,9 @@ async def run_pregame(
     ``username``, ``password``, ``register`` seed the first attempt.
     On failure the user is re-prompted via prompt_credentials().
     Injected ``read`` / ``write`` / ``getpass_fn`` replace stdin/stdout so
-    tests never touch real I/O.
+    tests never touch real I/O.  ``activity_logger``, if given, records every
+    command sent and every message received (JSON-lines, password redacted)
+    the same way the server side does.
     """
     import websockets
     ws = await websockets.connect(f"ws://{host}:{port}")
@@ -367,7 +429,8 @@ async def run_pregame(
     # Step 1 — auth with retry
     while True:
         ok = await login_or_register(
-            ws, username, password, register=register, write=write
+            ws, username, password, register=register, write=write,
+            activity_logger=activity_logger,
         )
         if ok:
             break
@@ -402,6 +465,7 @@ async def run_pregame(
                 write=write,
                 cancel_event=cancel_match_event,
                 recv_timeout_s=recv_timeout_s,
+                activity_logger=activity_logger,
             )
             if result is None:
                 continue
@@ -409,7 +473,8 @@ async def run_pregame(
             return ws, room_id, "player", result.get("color")
 
         if choice == MENU_ROOM:
-            result = await room_flow(ws, username, read=read, write=write)
+            result = await room_flow(ws, username, read=read, write=write,
+                                     activity_logger=activity_logger)
             if result is not None:
                 room_id, role, color = result
                 return ws, room_id, role, color

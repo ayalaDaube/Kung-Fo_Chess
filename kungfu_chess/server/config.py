@@ -29,6 +29,10 @@ _STATS_DEFAULTS = {
     "piece_scores": {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0},
 }
 
+_LOGGING_DEFAULTS = {
+    "log_path": "server_activity.log",
+}
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -57,6 +61,11 @@ class StatsConfig:
 
 
 @dataclass(frozen=True)
+class LoggingConfig:
+    log_path: str
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str
     port: int
@@ -64,6 +73,7 @@ class ServerConfig:
     realtime: RealtimeConfig
     matchmaking: MatchmakingConfig
     stats: StatsConfig
+    logging: LoggingConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -78,6 +88,7 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
     realtime_raw = {**_REALTIME_DEFAULTS, **data.get("realtime", {})}
     mm_raw = {**_MATCHMAKING_DEFAULTS, **data.get("matchmaking", {})}
     stats_raw = {**_STATS_DEFAULTS, **data.get("stats", {})}
+    logging_raw = {**_LOGGING_DEFAULTS, **data.get("logging", {})}
     return ServerConfig(
         host=merged["host"],
         port=merged["port"],
@@ -98,5 +109,8 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
         ),
         stats=StatsConfig(
             piece_scores=stats_raw["piece_scores"],
+        ),
+        logging=LoggingConfig(
+            log_path=logging_raw["log_path"],
         ),
     )

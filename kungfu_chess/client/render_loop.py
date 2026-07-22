@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 from kungfu_chess.server.network.protocol import (
     CMD_MOVE, CMD_JUMP, MoveCommand, JumpCommand,
 )
+from kungfu_chess.client.activity_logger import ClientActivityLogger
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ async def run_render_loop(
     command_queue: Optional[asyncio.Queue] = None,
     pop_error: Callable[[], Optional[str]] = lambda: None,
     my_color: Any = None,
+    activity_logger: "ClientActivityLogger | None" = None,
 ) -> None:
     """
     Drive one render frame per ``frame_interval_ms``, then yield.
@@ -174,6 +176,8 @@ async def run_render_loop(
                     try:
                         await ws.send(wire)
                         logger.info("Command sent: %s", wire)
+                        if activity_logger is not None:
+                            await activity_logger.log("command_sent", json.loads(wire))
                     except Exception:
                         logger.exception("Failed to send command")
 

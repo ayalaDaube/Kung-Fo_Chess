@@ -439,7 +439,7 @@ class TestAutoResignRoomCleanup(unittest.TestCase):
             session = router.session_for(rid)
             game_ended: list[dict] = []
             from kungfu_chess.server.bus import topics as _topics
-            session._bus.subscribe(_topics.GAME_ENDED, lambda p: game_ended.append(p))
+            session.subscribe(_topics.GAME_ENDED, lambda p: game_ended.append(p))
 
             await router._on_disconnect(str(id(ws_alice)))
             await asyncio.sleep(0.15)

@@ -17,6 +17,7 @@ from kungfu_chess.model.position import Position
 from kungfu_chess.server.network.protocol import (
     MSG_SNAPSHOT, MSG_OPPONENT_DISCONNECTED, MSG_OPPONENT_RECONNECTED, MSG_ERROR,
 )
+from kungfu_chess.client.activity_logger import ClientActivityLogger
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +81,11 @@ class SnapshotReceiver:
     cleared on MSG_OPPONENT_RECONNECTED or when a game-over snapshot arrives.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, activity_logger: "ClientActivityLogger | None" = None) -> None:
         self._snapshot: Optional[GameSnapshot] = None
         self._countdown_ms: Optional[int] = None
         self._pending_error: Optional[str] = None
+        self._activity_logger = activity_logger
 
     @property
     def snapshot(self) -> Optional[GameSnapshot]:
@@ -130,6 +132,12 @@ class SnapshotReceiver:
                 else:
                     logger.debug("Snapshot received — pieces=%d",
                                  len(self._snapshot.pieces))
+                if self._activity_logger is not None:
+                    import asyncio
+                    asyncio.ensure_future(self._activity_logger.log(
+                        "message_received",
+                        {"msg_type": MSG_SNAPSHOT, "game_over": self._snapshot.game_over},
+                    ))
                 return True
             except Exception:
                 logger.exception("Failed to parse snapshot: %s", raw[:200])
@@ -139,22 +147,35 @@ class SnapshotReceiver:
             self._countdown_ms = msg.get("auto_resign_ms")
             logger.info("Opponent disconnected — %r auto_resign_ms=%s",
                         msg.get("username"), self._countdown_ms)
+            if self._activity_logger is not None:
+                import asyncio
+                asyncio.ensure_future(self._activity_logger.log(
+                    "message_received",
+                    {"msg_type": MSG_OPPONENT_DISCONNECTED, "username": msg.get("username")},
+                ))
             return True
 
         if msg_type == MSG_OPPONENT_RECONNECTED:
             self._countdown_ms = None
             logger.info("Opponent reconnected — %r", msg.get("username"))
+            if self._activity_logger is not None:
+                import asyncio
+                asyncio.ensure_future(self._activity_logger.log(
+                    "message_received",
+                    {"msg_type": MSG_OPPONENT_RECONNECTED, "username": msg.get("username")},
+                ))
             return True
 
         if msg_type == MSG_ERROR:
-            # Previously dropped silently here: during live gameplay every
-            # rejected move (wrong piece, resting piece, illegal move, ...)
-            # arrives as MSG_ERROR on this same stream, not through pregame's
-            # _recv_until. Without this branch the player got zero feedback —
-            # a click that failed just looked like nothing happened.
             reason = msg.get("reason", "unknown error")
             self._pending_error = reason
             logger.warning("Command rejected: %s", reason)
+            if self._activity_logger is not None:
+                import asyncio
+                asyncio.ensure_future(self._activity_logger.log(
+                    "message_received",
+                    {"msg_type": MSG_ERROR, "reason": reason},
+                ))
             return True
 
         return False

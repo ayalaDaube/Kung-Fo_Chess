@@ -23,6 +23,7 @@ from typing import Any, Callable
 from kungfu_chess.server.auth.auth_service import AuthService, RegisterStatus, LoginStatus
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
+from kungfu_chess.server.logging_.activity_logger import ActivityLogger
 from kungfu_chess.server.config import RealtimeConfig, MatchmakingConfig
 from kungfu_chess.server.matchmaking.matchmaker import Matchmaker, MatchResult, QueueEntry
 from kungfu_chess.server.matchmaking.matchmaking_loop import MatchmakingLoop
@@ -72,11 +73,13 @@ class ConnectionRouter:
         auth_service: AuthService | None = None,
         matchmaking_config: MatchmakingConfig | None = None,
         room_id_generator: RoomIdGenerator = _default_room_id_generator,
+        activity_logger: ActivityLogger | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._realtime_config = realtime_config
         self._auth = auth_service
         self._room_id_generator = room_id_generator
+        self._activity_logger = activity_logger
 
         self._rooms: dict[str, GameSession] = {}           # room_id -> session
         self._tick_loops: dict[str, TickLoop] = {}         # room_id -> tick loop
@@ -125,6 +128,8 @@ class ConnectionRouter:
         session = self._session_factory()
         session.game_id = rid
         self._rooms[rid] = session
+        if self._activity_logger is not None:
+            self._subscribe_logger_to_session(session)
         self._tick_loops[rid] = TickLoop(
             session=session,
             broadcast=self._make_broadcast(rid),
@@ -147,6 +152,25 @@ class ConnectionRouter:
         logger.info("Room cancelled: %s", room_id)
         return True
 
+    def _subscribe_logger_to_session(self, session: GameSession) -> None:
+        """Subscribe ActivityLogger to every loggable bus topic on this session."""
+        al = self._activity_logger
+        assert al is not None
+        _loggable = [
+            topics.MOVE_ACCEPTED, topics.MOVE_REJECTED,
+            topics.JUMP_ACCEPTED, topics.JUMP_REJECTED,
+            topics.SNAPSHOT, topics.PLAYER_JOINED,
+            topics.PLAYER_DISCONNECTED, topics.PLAYER_RECONNECTED,
+            topics.GAME_ENDED,
+        ]
+        for topic in _loggable:
+            def _make_handler(t: str):
+                async def _handler(payload):
+                    game_id = payload.get("game_id") if isinstance(payload, dict) else None
+                    await al.log(t, payload, game_id=game_id)
+                return _handler
+            session.subscribe(topic, _make_handler(topic))
+
     def room_ids(self) -> list[str]:
         return list(self._rooms.keys())
 
@@ -160,6 +184,13 @@ class ConnectionRouter:
         if isinstance(result, ProtocolError):
             await self._send_error(conn_id, result.reason)
             return
+
+        if self._activity_logger is not None:
+            cmd_type = type(result).__name__
+            await self._activity_logger.log(
+                "command_received",
+                {"connection_id": conn_id, "command_type": cmd_type},
+            )
 
         if isinstance(result, (LoginCommand, RegisterCommand)):
             await self._handle_auth(conn_id, result)
@@ -271,8 +302,18 @@ class ConnectionRouter:
             if result.status == RegisterStatus.SUCCESS:
                 self._logged_in[conn_id] = (result.user.username, result.user.elo)
                 await self._send(conn_id, {"type": MSG_REGISTERED, "username": command.username})
+                if self._activity_logger is not None:
+                    await self._activity_logger.log(
+                        "auth_register",
+                        {"username": command.username, "outcome": "success"},
+                    )
             else:
                 await self._send_error(conn_id, result.message)
+                if self._activity_logger is not None:
+                    await self._activity_logger.log(
+                        "auth_register",
+                        {"username": command.username, "outcome": "failure", "reason": result.message},
+                    )
         else:
             result = await self._auth.login(command.username, command.password)
             if result.status == LoginStatus.SUCCESS:
@@ -282,8 +323,18 @@ class ConnectionRouter:
                     "username": result.user.username,
                     "elo": result.user.elo,
                 })
+                if self._activity_logger is not None:
+                    await self._activity_logger.log(
+                        "auth_login",
+                        {"username": command.username, "outcome": "success"},
+                    )
             else:
                 await self._send_error(conn_id, "invalid credentials")
+                if self._activity_logger is not None:
+                    await self._activity_logger.log(
+                        "auth_login",
+                        {"username": command.username, "outcome": "failure", "reason": "invalid_credentials"},
+                    )
 
     async def _handle_find_match(self, conn_id: str) -> None:
         if self._matchmaker is None:

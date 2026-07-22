@@ -32,6 +32,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))
 import cv2
 from screeninfo import get_monitors
 
+from kungfu_chess.client.activity_logger import ClientActivityLogger
 from kungfu_chess.client.logger import setup_client_logging
 from kungfu_chess.client.pregame import prompt_credentials, run_pregame
 from kungfu_chess.client.render_loop import run_render_loop
@@ -76,6 +77,7 @@ async def async_main(
     """
     cfg = load_config()
     setup_client_logging(cfg.client_log_path)
+    activity_logger = ClientActivityLogger(cfg.client_log_path)
     logger.info("Client starting")
 
     # ── Step 1: prompt for credentials ────────────────────────────────────────
@@ -116,7 +118,7 @@ async def async_main(
     mapper = BoardMapper(board_w_cells, board_h_cells, cell_size,
                          offset_x=offset_x, offset_y=offset_y)
 
-    receiver      = SnapshotReceiver()
+    receiver      = SnapshotReceiver(activity_logger=activity_logger)
     controller    = Controller(mapper, receiver.latest)
     command_queue: asyncio.Queue = asyncio.Queue()
 
@@ -128,6 +130,7 @@ async def async_main(
         register=register,
         read=read,
         write=write,
+        activity_logger=activity_logger,
     )
     if result is None:
         logger.info("Pre-game exited without joining a room.")
@@ -173,6 +176,7 @@ async def async_main(
         command_queue=command_queue,
         pop_error=receiver.pop_error,
         my_color=my_color,
+        activity_logger=activity_logger,
     )
 
     render_task  = asyncio.ensure_future(render_coro)

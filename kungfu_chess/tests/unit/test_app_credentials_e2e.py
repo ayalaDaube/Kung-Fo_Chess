@@ -27,6 +27,7 @@ from kungfu_chess.server.auth.auth_service import AuthService
 from kungfu_chess.server.auth.db import InMemoryUserRepository
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.config import AuthConfig, RealtimeConfig
+from kungfu_chess.server.config import LoggingConfig as LC
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.session.game_session import GameSession
 
@@ -153,7 +154,7 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                 from kungfu_chess.server import config as srv_cfg_mod
                 from kungfu_chess.server.config import (
                     ServerConfig, AuthConfig as AC, RealtimeConfig as RC,
-                    MatchmakingConfig as MC, StatsConfig as SC,
+                    MatchmakingConfig as MC, StatsConfig as SC, LoggingConfig as LGC,
                 )
                 fake_srv_cfg = ServerConfig(
                     host=_HOST, port=_PORT,
@@ -161,6 +162,7 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                     realtime=RC(tick_interval_ms=50, auto_resign_ms=5000),
                     matchmaking=MC(elo_range=100, elo_widen_step=50, widen_interval_ms=5000, timeout_ms=60000),
                     stats=SC(piece_scores={"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}),
+                    logging=LGC(log_path="test_activity.log"),
                 )
 
                 # We can't run the full render loop (no cv2 display in CI),

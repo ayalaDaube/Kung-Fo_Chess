@@ -218,6 +218,80 @@ class TestLoginOrRegister(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class TestLoginOrRegisterActivityLogging(unittest.TestCase):
+    """
+    Regression coverage: the client-side ClientActivityLogger existed as a
+    class (and render_loop.py/snapshot_receiver.py already accepted it) but
+    nothing in the real client flow ever constructed one and passed it in —
+    pregame.py in particular sends the CMD_LOGIN/CMD_REGISTER commands that
+    carry the password, so it's the most safety-critical spot to wire up.
+    """
+
+    def test_successful_login_logs_command_and_message(self):
+        import os
+        import tempfile
+        from kungfu_chess.client.activity_logger import ClientActivityLogger
+
+        auth = _make_auth(("alice", "secret"))
+        router = _make_router(auth=auth)
+
+        with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as f:
+            path = f.name
+        try:
+            al = ClientActivityLogger(path)
+
+            async def _run():
+                async with websockets.serve(router.handle, _HOST, _BASE_PORT + 20):
+                    ws = await websockets.connect(f"ws://{_HOST}:{_BASE_PORT + 20}")
+                    ok = await login_or_register(ws, "alice", "secret", activity_logger=al)
+                    await ws.close()
+                    return ok
+
+            ok = asyncio.run(_run())
+            self.assertTrue(ok)
+
+            with open(path, encoding="utf-8") as fh:
+                lines = [json.loads(l) for l in fh if l.strip()]
+            types = [l["type"] for l in lines]
+            self.assertIn("command_sent", types)
+            self.assertIn("message_received", types)
+
+            sent = next(l for l in lines if l["type"] == "command_sent")
+            self.assertEqual(sent["payload"]["cmd"], CMD_LOGIN)
+        finally:
+            os.unlink(path)
+
+    def test_failed_login_log_never_contains_password(self):
+        """Critical: same guarantee as the server side, enforced client-side too."""
+        import os
+        import tempfile
+        from kungfu_chess.client.activity_logger import ClientActivityLogger
+
+        auth = _make_auth(("alice", "secret"))
+        router = _make_router(auth=auth)
+
+        with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as f:
+            path = f.name
+        try:
+            al = ClientActivityLogger(path)
+
+            async def _run():
+                async with websockets.serve(router.handle, _HOST, _BASE_PORT + 21):
+                    ws = await websockets.connect(f"ws://{_HOST}:{_BASE_PORT + 21}")
+                    ok = await login_or_register(ws, "alice", "super_secret_client_pw", activity_logger=al)
+                    await ws.close()
+                    return ok
+
+            ok = asyncio.run(_run())
+            self.assertFalse(ok)
+
+            with open(path, encoding="utf-8") as fh:
+                content = fh.read()
+            self.assertNotIn("super_secret_client_pw", content)
+        finally:
+            os.unlink(path)
+
+
 # ── Test 4: find_match → MSG_MATCH_FOUND ─────────────────────────────────────
 
 class TestFindMatchFound(unittest.TestCase):

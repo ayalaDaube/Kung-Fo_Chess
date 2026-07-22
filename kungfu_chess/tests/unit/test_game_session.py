@@ -418,6 +418,21 @@ class TestResign(unittest.TestCase):
 
 class TestPublicBusMethods(unittest.TestCase):
 
+    def test_subscribe_delegates_to_session_bus(self):
+        """
+        Regression test: GameSession.subscribe() lets a caller (e.g.
+        ConnectionRouter wiring in an ActivityLogger) register a handler on
+        the session's bus without ever reaching into the private _bus
+        attribute directly.
+        """
+        session, bus = _make_session()
+        received: list[dict] = []
+        session.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["username"], "alice")
+
     def test_publish_disconnected_fires_event(self):
         session, bus = _make_session()
         received: list[dict] = []

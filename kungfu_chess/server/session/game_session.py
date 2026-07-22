@@ -194,7 +194,16 @@ class GameSession:
         })
         return self._engine.snapshot(stats=self._stats)
 
-    # ── disconnect/reconnect bus helpers ──────────────────────────────────────
+    # ── bus access ─────────────────────────────────────────────────────────────
+
+    def subscribe(self, topic: str, handler: Callable) -> None:
+        """
+        Register handler on this session's event bus. The bus itself stays
+        private — callers that need to react to session events (e.g.
+        ConnectionRouter wiring in an ActivityLogger) go through this method
+        instead of reaching into self._bus directly.
+        """
+        self._bus.subscribe(topic, handler)
 
     async def publish_disconnected(self, room_id: str, username: str, conn_id: str) -> None:
         """Publish PLAYER_DISCONNECTED on this session's bus."""
