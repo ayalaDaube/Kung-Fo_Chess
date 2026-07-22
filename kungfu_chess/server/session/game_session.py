@@ -20,6 +20,7 @@ from kungfu_chess.server.network.protocol import MoveCommand, JumpCommand, Comma
 from kungfu_chess.server.session.player_identity import (
     PlayerRecord, IdentityResolver, default_identity_resolver,
 )
+from kungfu_chess.ui.game_stats_tracker import GameStatsTracker
 
 
 def _default_engine_factory() -> GameEngine:
@@ -46,6 +47,7 @@ class GameSession:
     def __init__(
         self,
         bus: EventBus,
+        piece_scores: dict,
         engine_factory: Callable[[], GameEngine] = _default_engine_factory,
         identity_resolver: IdentityResolver = default_identity_resolver,
         game_id: str = "",
@@ -54,6 +56,7 @@ class GameSession:
         self._engine: GameEngine = engine_factory()
         self._identity_resolver = identity_resolver
         self.game_id = game_id
+        self._stats = GameStatsTracker(board_height=self._engine.board.height, piece_scores=piece_scores)
 
         # username -> PlayerRecord  (stable player state)
         self._players: dict[str, PlayerRecord] = {}
@@ -167,7 +170,7 @@ class GameSession:
             topic = topics.JUMP_ACCEPTED if result.is_accepted else topics.JUMP_REJECTED
 
         await self._bus.publish(topic, {"game_id": self.game_id, "result": result})
-        snapshot = self._engine.snapshot()
+        snapshot = self._engine.snapshot(stats=self._stats)
         await self._bus.publish(topics.SNAPSHOT, {"game_id": self.game_id, "snapshot": snapshot})
         return result, snapshot
 
@@ -182,13 +185,14 @@ class GameSession:
         winner_username = next(
             (u for u, r in self._players.items() if u != username), None
         )
-        self._engine.force_game_over()
+        winner_color = self._players[winner_username].color if winner_username else None
+        self._engine.force_game_over(winner_color=winner_color)
         await self._bus.publish(topics.GAME_ENDED, {
             "game_id": self.game_id,
             "winner": winner_username,
             "loser": username,
         })
-        return self._engine.snapshot()
+        return self._engine.snapshot(stats=self._stats)
 
     # ── disconnect/reconnect bus helpers ──────────────────────────────────────
 
@@ -215,9 +219,11 @@ class GameSession:
     # ── engine access ─────────────────────────────────────────────────────────
 
     def tick(self, ms: int) -> list:
-        """Advance engine time by ms. Returns the resulting events."""
-        return self._engine.wait(ms)
+        """Advance engine time by ms, feed the resulting events to stats, and return them."""
+        events = self._engine.wait(ms)
+        self._stats.process(events, ms)
+        return events
 
     def build_snapshot(self) -> GameSnapshot:
         """Current snapshot — used by the tick loop and on-demand by the router."""
-        return self._engine.snapshot()
+        return self._engine.snapshot(stats=self._stats)

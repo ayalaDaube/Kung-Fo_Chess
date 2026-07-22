@@ -39,3 +39,6 @@ class GameSnapshot:
     airborne_pos: Optional[Position]
     scores: dict = field(default_factory=dict)          # PieceColor -> int
     move_history: list = field(default_factory=list)    # list[MoveRecord]
+    winner_color: Optional[PieceColor] = None
+    """Set when game_over is True and the outcome is known (e.g. resignation).
+    None for a natural king-capture ending — the board itself shows the result."""

@@ -50,6 +50,7 @@ _BOARD = """\
 """
 
 _RT_CFG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=500)
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_router() -> ConnectionRouter:
@@ -57,7 +58,7 @@ def _make_router() -> ConnectionRouter:
         board = BoardParser().parse(_BOARD)
         return GameEngine(board=board, rule_engine=RuleEngine(), arbiter=RealTimeArbiter())
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_engine),
         realtime_config=_RT_CFG,
     )
 
@@ -143,6 +144,47 @@ class TestClientLoggingConfig(unittest.TestCase):
                 if isinstance(h, logging.FileHandler) and h.baseFilename == path:
                     h.close()
                     client_logger.removeHandler(h)
+            os.unlink(path)
+
+    def test_debug_records_do_not_propagate_to_root(self):
+        """Bug D: DEBUG records from kungfu_chess.client must reach the file
+        handler but must NOT propagate to a root handler attached in this test."""
+        with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as f:
+            path = f.name
+        root_records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                root_records.append(record)
+
+        root_handler = _Capture(level=logging.DEBUG)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(root_handler)
+        try:
+            setup_client_logging(path)
+            logging.getLogger("kungfu_chess.client.test_propagate").debug("should not propagate")
+            # Flush the file handler so the write is visible.
+            client_logger = logging.getLogger("kungfu_chess.client")
+            for h in client_logger.handlers:
+                if isinstance(h, logging.FileHandler) and h.baseFilename == path:
+                    h.flush()
+            file_contents = _log_contents(path)
+            # Record reached the file.
+            self.assertIn("should not propagate", file_contents)
+            # Record did NOT reach the root handler.
+            leaked = [r for r in root_records
+                      if r.name.startswith("kungfu_chess.client")]
+            self.assertEqual(leaked, [],
+                             "DEBUG record propagated to root — propagate not disabled")
+        finally:
+            root_logger.removeHandler(root_handler)
+            client_logger = logging.getLogger("kungfu_chess.client")
+            for h in list(client_logger.handlers):
+                if isinstance(h, logging.FileHandler) and h.baseFilename == path:
+                    h.close()
+                    client_logger.removeHandler(h)
+            # Re-enable propagation so other tests are unaffected.
+            client_logger.propagate = True
             os.unlink(path)
 
 
@@ -233,7 +275,7 @@ class TestPregameLogging(unittest.TestCase):
         asyncio.run(auth.register("testuser", "pw"))
 
         router = ConnectionRouter(
-            session_factory=lambda: GameSession(bus=EventBus(),
+            session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES,
                                                 engine_factory=lambda: GameEngine(
                                                     BoardParser().parse(_BOARD),
                                                     RuleEngine(), RealTimeArbiter())),
@@ -273,7 +315,7 @@ class TestPregameLogging(unittest.TestCase):
         asyncio.run(auth.register("testuser2", "correct"))
 
         router = ConnectionRouter(
-            session_factory=lambda: GameSession(bus=EventBus(),
+            session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES,
                                                 engine_factory=lambda: GameEngine(
                                                     BoardParser().parse(_BOARD),
                                                     RuleEngine(), RealTimeArbiter())),

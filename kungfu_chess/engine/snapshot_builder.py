@@ -32,7 +32,8 @@ def _motion_info(piece, arbiter: RealTimeArbiter) -> tuple[Optional[Position], f
 
 def build_snapshot(board: Board, arbiter: RealTimeArbiter,
                    selected_cell: Optional[Position], game_over: bool,
-                   stats: Optional[StatsProvider] = None) -> GameSnapshot:
+                   stats: Optional[StatsProvider] = None,
+                   winner_color: Optional[PieceColor] = None) -> GameSnapshot:
     """Builds a pixel-agnostic GameSnapshot DTO. All positions are in board-space."""
     pieces_data = []
     for piece in board.all_pieces():
@@ -58,4 +59,5 @@ def build_snapshot(board: Board, arbiter: RealTimeArbiter,
         airborne_pos=arbiter.airborne_position(),
         scores=stats.scores if stats else {},
         move_history=stats.move_history if stats else [],
+        winner_color=winner_color,
     )

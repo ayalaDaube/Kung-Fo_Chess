@@ -33,6 +33,8 @@ _MINIMAL_BOARD = """\
 . . . . wK . . .
 """
 
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
+
 
 def _make_engine() -> GameEngine:
     board = BoardParser().parse(_MINIMAL_BOARD)
@@ -41,7 +43,7 @@ def _make_engine() -> GameEngine:
 
 def _make_session() -> tuple[GameSession, EventBus]:
     bus = EventBus()
-    session = GameSession(bus=bus, engine_factory=_make_engine)
+    session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine)
     return session, bus
 
 
@@ -125,7 +127,7 @@ class TestRecordJoin(unittest.TestCase):
 
     def test_player_joined_payload_includes_game_id(self):
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="room-42")
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine, game_id="room-42")
         session.assign_color("conn-1")
         received = []
         bus.subscribe(topics.PLAYER_JOINED, lambda p: received.append(p))
@@ -168,6 +170,7 @@ class TestIdentityResolver(unittest.TestCase):
         bus = EventBus()
         session = GameSession(
             bus=bus,
+            piece_scores=_PIECE_SCORES,
             engine_factory=_make_engine,
             identity_resolver=lambda name: name.lower(),
         )
@@ -213,7 +216,7 @@ class TestHandleCommand(unittest.TestCase):
 
     def test_valid_move_publishes_snapshot_with_game_id(self):
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-snap")
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine, game_id="g-snap")
         session.assign_color("conn-1")
         received = []
         bus.subscribe(topics.SNAPSHOT, lambda s: received.append(s))
@@ -231,7 +234,7 @@ class TestHandleCommand(unittest.TestCase):
 
     def test_valid_move_accepted_includes_game_id(self):
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-ma")
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine, game_id="g-ma")
         session.assign_color("conn-1")
         accepted = []
         bus.subscribe(topics.MOVE_ACCEPTED, lambda r: accepted.append(r))
@@ -250,7 +253,7 @@ class TestHandleCommand(unittest.TestCase):
 
     def test_invalid_move_rejected_includes_game_id(self):
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-mr")
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine, game_id="g-mr")
         session.assign_color("conn-1")
         rejected = []
         bus.subscribe(topics.MOVE_REJECTED, lambda r: rejected.append(r))
@@ -269,7 +272,7 @@ class TestHandleCommand(unittest.TestCase):
 
     def test_valid_jump_accepted_includes_game_id(self):
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=_make_engine, game_id="g-ja")
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=_make_engine, game_id="g-ja")
         session.assign_color("conn-1")
         accepted = []
         bus.subscribe(topics.JUMP_ACCEPTED, lambda r: accepted.append(r))
@@ -284,7 +287,7 @@ class TestHandleCommandSnapshot(unittest.TestCase):
         engine = GameEngine(board=board, rule_engine=RuleEngine(),
                             arbiter=RealTimeArbiter(ms_per_square=500))
         bus = EventBus()
-        session = GameSession(bus=bus, engine_factory=lambda: engine)
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=lambda: engine)
         session.assign_color("conn-1")
         cmd = MoveCommand(from_pos=Position(0, 0), to_pos=Position(0, 1))
         run(session.handle_command("conn-1", cmd))
@@ -308,7 +311,48 @@ class TestHandleCommandSnapshot(unittest.TestCase):
         self.assertEqual(snapshot.scores[PieceColor.WHITE], 1)
 
 
-class TestTwoSessionsIsolated(unittest.TestCase):
+class TestStatsWiring(unittest.TestCase):
+    """Regression: GameSession.tick() must feed events to GameStatsTracker so
+    build_snapshot() returns non-empty scores and move_history after a capture."""
+
+    def test_capture_updates_scores_via_tick(self):
+        # wR at (0,0), bP at (0,1) — rook captures pawn in one square move
+        board = BoardParser().parse("wR bP")
+        engine = GameEngine(board=board, rule_engine=RuleEngine(),
+                            arbiter=RealTimeArbiter(ms_per_square=500))
+        bus = EventBus()
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=lambda: engine)
+        session.assign_color("conn-1")
+
+        run(session.handle_command("conn-1", MoveCommand(from_pos=Position(0, 0), to_pos=Position(0, 1))))
+        session.tick(1000)   # piece arrives and captures
+
+        snapshot = session.build_snapshot()
+        self.assertEqual(snapshot.scores[PieceColor.WHITE], 1)   # pawn = 1 point
+
+    def test_capture_populates_move_history_via_tick(self):
+        board = BoardParser().parse("wR bP")
+        engine = GameEngine(board=board, rule_engine=RuleEngine(),
+                            arbiter=RealTimeArbiter(ms_per_square=500))
+        bus = EventBus()
+        session = GameSession(bus=bus, piece_scores=_PIECE_SCORES, engine_factory=lambda: engine)
+        session.assign_color("conn-1")
+
+        run(session.handle_command("conn-1", MoveCommand(from_pos=Position(0, 0), to_pos=Position(0, 1))))
+        session.tick(1000)
+
+        snapshot = session.build_snapshot()
+        self.assertGreater(len(snapshot.move_history), 0)
+
+    def test_scores_zero_before_any_capture(self):
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        snapshot = session.build_snapshot()
+        self.assertEqual(snapshot.scores.get(PieceColor.WHITE, 0), 0)
+        self.assertEqual(snapshot.scores.get(PieceColor.BLACK, 0), 0)
+
+
+
 
     def test_move_in_one_room_does_not_affect_other(self):
         """A move command in session A must not change session B's state at all."""
@@ -353,6 +397,23 @@ class TestResign(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["loser"], "alice")
         self.assertEqual(events[0]["winner"], "bob")
+
+    def test_resign_sets_winner_color_on_snapshot(self):
+        """
+        Regression test: previously the game-over snapshot carried no
+        indication of who won a resignation, so a client had no way to
+        show "YOU WIN"/"YOU LOSE" — only a bare "GAME OVER".
+        assign_color() gives the first joiner WHITE, the second BLACK, so
+        alice (conn-1, joined first) is WHITE and bob (conn-2) is BLACK.
+        Alice resigns → bob (BLACK) is the winner.
+        """
+        session, _ = _make_session()
+        session.assign_color("conn-1")
+        run(session.record_join("conn-1", "alice"))
+        session.assign_color("conn-2")
+        run(session.record_join("conn-2", "bob"))
+        snapshot = run(session.resign("alice"))
+        self.assertEqual(snapshot.winner_color, PieceColor.BLACK)
 
 
 class TestPublicBusMethods(unittest.TestCase):

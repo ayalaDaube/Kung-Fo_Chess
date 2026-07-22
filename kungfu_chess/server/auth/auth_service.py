@@ -35,6 +35,7 @@ class LoginStatus(Enum):
 class RegisterResult:
     status: RegisterStatus
     message: str
+    user: UserRecord | None = None   # populated on SUCCESS only
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,9 @@ class AuthService:
         await asyncio.to_thread(
             self._repo.create_user, username, password_hash.decode(), self._config.default_starting_elo
         )
-        return RegisterResult(RegisterStatus.SUCCESS, "registered successfully")
+        user = UserRecord(username=username, password_hash=password_hash.decode(),
+                          elo=self._config.default_starting_elo)
+        return RegisterResult(RegisterStatus.SUCCESS, "registered successfully", user=user)
 
     async def login(self, username: str, password: str) -> LoginResult:
         user = await asyncio.to_thread(self._repo.get_user_by_username, username)

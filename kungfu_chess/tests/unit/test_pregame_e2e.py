@@ -88,6 +88,7 @@ _RT_CFG = RealtimeConfig(
     tick_interval_ms=50,
     auto_resign_ms=_load_cfg().realtime.auto_resign_ms,
 )
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_engine() -> GameEngine:
@@ -113,7 +114,7 @@ def _make_router(
     mm_cfg: MatchmakingConfig | None = None,
 ) -> ConnectionRouter:
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
         realtime_config=_RT_CFG,
         auth_service=auth,
         matchmaking_config=mm_cfg,
@@ -260,6 +261,14 @@ class TestFindMatchFound(unittest.TestCase):
         self.assertTrue(any("Match found" in line for line in out1.lines))
         self.assertTrue(any("Match found" in line for line in out2.lines))
 
+        # Regression: find_match_flow used to discard the server's
+        # MSG_ASSIGNED message, so run_pregame always returned color=None
+        # for a matchmade game — the client never knew which side it was
+        # playing (needed to tell "YOU WIN" from "YOU LOSE" on game over).
+        self.assertIn(r1["color"], ("w", "b"))
+        self.assertIn(r2["color"], ("w", "b"))
+        self.assertNotEqual(r1["color"], r2["color"])
+
 
 # ── Test 5: find_match → MSG_MATCH_TIMEOUT ───────────────────────────────────
 
@@ -369,10 +378,13 @@ class TestRunPregameRoomPath(unittest.TestCase):
         self.assertEqual(role, "player")
 
     def test_bad_login_returns_none(self):
-        """Wrong password in run_pregame → returns None without entering menu."""
+        """Wrong password in run_pregame → user quits at retry prompt → returns None."""
         auth = _make_auth(("frank", "correct"))
         router = _make_router(auth=auth)
         out = _Capture()
+
+        # read() sequence: menu choice (unused — auth fails first), then empty username to quit
+        inputs = iter([""])
 
         async def _run():
             async with websockets.serve(router.handle, _HOST, _BASE_PORT + 8):
@@ -380,13 +392,14 @@ class TestRunPregameRoomPath(unittest.TestCase):
                     _HOST, _BASE_PORT + 8,
                     "frank", "wrong",
                     register=False,
-                    read=lambda: "",
+                    read=lambda: next(inputs),
                     write=out,
                 )
                 return result
 
         result = asyncio.run(_run())
         self.assertIsNone(result)
+        self.assertTrue(any("Error" in line or "error" in line for line in out.lines))
 
     def test_quit_choice_returns_none(self):
         """Choosing MENU_QUIT in the menu → returns None cleanly."""
@@ -409,6 +422,98 @@ class TestRunPregameRoomPath(unittest.TestCase):
 
         result = asyncio.run(_run())
         self.assertIsNone(result)
+
+
+# ── Test 8: Bug B — find_match_flow returns None promptly on server error ───────────
+
+class TestFindMatchServerError(unittest.TestCase):
+
+    def test_find_match_not_logged_in_returns_none_promptly(self):
+        """
+        Bug B: a client that sends CMD_FIND_MATCH without being logged in
+        receives MSG_ERROR from the server.  find_match_flow must return None
+        promptly (well under the 120 s timeout) and write the error message.
+        """
+        router = _make_router(auth=_make_auth(), mm_cfg=_MM_CFG_FAST)
+        out = _Capture()
+
+        async def _run():
+            async with websockets.serve(router.handle, _HOST, _BASE_PORT + 10):
+                ws = await websockets.connect(f"ws://{_HOST}:{_BASE_PORT + 10}")
+                # Do NOT log in — send find_match straight away.
+                result = await find_match_flow(ws, write=out, recv_timeout_s=5.0)
+                await ws.close()
+                return result
+
+        result = asyncio.run(_run())
+        self.assertIsNone(result)
+        self.assertTrue(any("Error" in line or "error" in line for line in out.lines))
+
+
+# ── Test 9 & 10: Bug C — run_pregame retries on auth failure ─────────────────
+
+class TestRunPregameAuthRetry(unittest.TestCase):
+
+    def test_retry_after_wrong_password_then_succeed(self):
+        """
+        Bug C: wrong password on first attempt → re-prompt → correct password
+        on second attempt → reaches menu → quits cleanly.  The WebSocket must
+        NOT be closed between the two attempts.
+        """
+        auth = _make_auth(("henry", "correct"))
+        router = _make_router(auth=auth)
+        out = _Capture()
+
+        # read() sequence after the first (failed) attempt:
+        #   retry-username prompt → "henry"
+        #   auth-choice prompt    → AUTH_LOGIN
+        #   menu choice           → MENU_QUIT
+        retry_inputs = iter(["henry", AUTH_LOGIN, MENU_QUIT])
+
+        async def _run():
+            async with websockets.serve(router.handle, _HOST, _BASE_PORT + 11):
+                result = await run_pregame(
+                    _HOST, _BASE_PORT + 11,
+                    "henry", "wrong",          # first attempt — will fail
+                    register=False,
+                    read=lambda: next(retry_inputs),
+                    write=out,
+                    getpass_fn=lambda _: "correct",  # password for retry
+                )
+                return result
+
+        result = asyncio.run(_run())
+        self.assertIsNone(result)   # quit from menu
+        self.assertTrue(any("Error" in line or "error" in line for line in out.lines))
+        self.assertTrue(any("Logged in" in line for line in out.lines))
+
+    def test_retry_then_quit_with_empty_username(self):
+        """
+        Bug C: wrong password → re-prompt → empty username → returns None
+        without crashing and without entering the menu.
+        """
+        auth = _make_auth(("ivan", "correct"))
+        router = _make_router(auth=auth)
+        out = _Capture()
+
+        # After the failed first attempt, read() returns "" (empty = quit)
+        retry_inputs = iter([""])
+
+        async def _run():
+            async with websockets.serve(router.handle, _HOST, _BASE_PORT + 12):
+                result = await run_pregame(
+                    _HOST, _BASE_PORT + 12,
+                    "ivan", "wrong",
+                    register=False,
+                    read=lambda: next(retry_inputs),
+                    write=out,
+                    getpass_fn=lambda _: "wrong",
+                )
+                return result
+
+        result = asyncio.run(_run())
+        self.assertIsNone(result)
+        self.assertTrue(any("Error" in line or "error" in line for line in out.lines))
 
 
 if __name__ == "__main__":

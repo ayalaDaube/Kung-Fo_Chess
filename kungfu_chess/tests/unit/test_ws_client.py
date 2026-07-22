@@ -34,6 +34,9 @@ _MINIMAL_BOARD = """\
 """
 
 
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
+
+
 def _make_engine() -> GameEngine:
     board = BoardParser().parse(_MINIMAL_BOARD)
     return GameEngine(board=board, rule_engine=RuleEngine(), arbiter=RealTimeArbiter())
@@ -41,7 +44,7 @@ def _make_engine() -> GameEngine:
 
 def _make_router() -> ConnectionRouter:
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
         realtime_config=RealtimeConfig(tick_interval_ms=50, auto_resign_ms=_load_cfg().realtime.auto_resign_ms),
     )
 

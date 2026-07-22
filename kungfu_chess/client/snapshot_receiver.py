@@ -14,7 +14,9 @@ from typing import Optional
 from kungfu_chess.model.game_state import GameSnapshot, PieceSnapshot, MoveRecord
 from kungfu_chess.model.piece import PieceColor, PieceKind, PieceState
 from kungfu_chess.model.position import Position
-from kungfu_chess.server.network.protocol import MSG_SNAPSHOT, MSG_OPPONENT_DISCONNECTED, MSG_OPPONENT_RECONNECTED
+from kungfu_chess.server.network.protocol import (
+    MSG_SNAPSHOT, MSG_OPPONENT_DISCONNECTED, MSG_OPPONENT_RECONNECTED, MSG_ERROR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ def parse_snapshot(data: dict) -> GameSnapshot:
     """
     raw_scores = data.get("scores", {})
     scores = {PieceColor(k): v for k, v in raw_scores.items()}
+    raw_winner = data.get("winner_color")
 
     return GameSnapshot(
         board_width=data["board_width"],
@@ -63,6 +66,7 @@ def parse_snapshot(data: dict) -> GameSnapshot:
         airborne_pos=_pos(data.get("airborne_pos")),
         scores=scores,
         move_history=[_move_record(m) for m in data.get("move_history", [])],
+        winner_color=PieceColor(raw_winner) if raw_winner is not None else None,
     )
 
 
@@ -79,6 +83,7 @@ class SnapshotReceiver:
     def __init__(self) -> None:
         self._snapshot: Optional[GameSnapshot] = None
         self._countdown_ms: Optional[int] = None
+        self._pending_error: Optional[str] = None
 
     @property
     def snapshot(self) -> Optional[GameSnapshot]:
@@ -93,9 +98,19 @@ class SnapshotReceiver:
         """Zero-argument callable — suitable as a SnapshotProvider for Controller."""
         return self._snapshot
 
+    def pop_error(self) -> Optional[str]:
+        """
+        Return and clear the most recent MSG_ERROR reason (e.g. a rejected
+        move), or None if none is pending.  "Pop" semantics mean each error
+        is surfaced to the caller exactly once — suitable for a render loop
+        polling once per frame.
+        """
+        err, self._pending_error = self._pending_error, None
+        return err
+
     def feed(self, raw: str) -> bool:
         """
-        Parse one raw WebSocket message.  Handles MSG_SNAPSHOT,
+        Parse one raw WebSocket message.  Handles MSG_SNAPSHOT, MSG_ERROR,
         MSG_OPPONENT_DISCONNECTED, and MSG_OPPONENT_RECONNECTED.
         Returns True if the message was recognised.
         """
@@ -129,6 +144,17 @@ class SnapshotReceiver:
         if msg_type == MSG_OPPONENT_RECONNECTED:
             self._countdown_ms = None
             logger.info("Opponent reconnected — %r", msg.get("username"))
+            return True
+
+        if msg_type == MSG_ERROR:
+            # Previously dropped silently here: during live gameplay every
+            # rejected move (wrong piece, resting piece, illegal move, ...)
+            # arrives as MSG_ERROR on this same stream, not through pregame's
+            # _recv_until. Without this branch the player got zero feedback —
+            # a click that failed just looked like nothing happened.
+            reason = msg.get("reason", "unknown error")
+            self._pending_error = reason
+            logger.warning("Command rejected: %s", reason)
             return True
 
         return False

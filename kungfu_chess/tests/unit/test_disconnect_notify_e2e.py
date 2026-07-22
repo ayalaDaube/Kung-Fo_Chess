@@ -21,7 +21,7 @@ from kungfu_chess.server.config import RealtimeConfig
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
     CMD_CREATE_ROOM, CMD_JOIN_ROOM,
-    MSG_ASSIGNED, MSG_ROOM_CREATED, MSG_ROOM_JOINED,
+    MSG_ASSIGNED, MSG_ERROR, MSG_ROOM_CREATED, MSG_ROOM_JOINED,
     MSG_OPPONENT_DISCONNECTED, MSG_OPPONENT_RECONNECTED,
 )
 from kungfu_chess.server.session.game_session import GameSession
@@ -42,6 +42,7 @@ _BOARD = """\
 
 # Short auto_resign_ms so tests don't wait long.
 _RT_CFG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=300)
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_router() -> ConnectionRouter:
@@ -50,7 +51,7 @@ def _make_router() -> ConnectionRouter:
         return GameEngine(board=board, rule_engine=RuleEngine(), arbiter=RealTimeArbiter())
 
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_engine),
         realtime_config=_RT_CFG,
     )
 
@@ -183,6 +184,28 @@ class TestOpponentDisconnectNotify(unittest.TestCase):
 
         recv.feed(wire)
         self.assertIsNone(recv.countdown_ms)
+
+    def test_snapshot_receiver_pop_error(self):
+        """
+        SnapshotReceiver.feed() records MSG_ERROR (e.g. a rejected move) and
+        pop_error() returns it exactly once, then clears it.
+
+        Regression test: this stream previously had no MSG_ERROR handling at
+        all, so every rejected move during live gameplay (wrong piece,
+        resting piece, illegal move, ...) vanished with zero feedback.
+        """
+        recv = SnapshotReceiver()
+        self.assertIsNone(recv.pop_error())
+
+        handled = recv.feed(json.dumps({
+            "type": MSG_ERROR,
+            "reason": "not your piece",
+        }))
+        self.assertTrue(handled)
+
+        self.assertEqual(recv.pop_error(), "not your piece")
+        # Popped exactly once — a second call returns None.
+        self.assertIsNone(recv.pop_error())
 
     def test_disconnected_message_not_sent_to_disconnecting_player(self):
         """

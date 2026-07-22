@@ -75,7 +75,8 @@ class Renderer:
     # ------------------------------------------------------------------
 
     def render(self, snapshot: GameSnapshot, delta_ms: float = 0,
-               countdown_ms: int | None = None) -> Img:
+               countdown_ms: int | None = None, error_message: str | None = None,
+               my_color=None) -> Img:
         """Build and return a fully-drawn Img. delta_ms = same ms passed to engine.wait()."""
         self._animator.advance(delta_ms)
 
@@ -90,7 +91,9 @@ class Renderer:
         self._board_layer.draw(canvas, snapshot)
         self._overlay_layer.draw(canvas, snapshot)
         self._piece_layer.draw(canvas, snapshot)
-        self._hud_layer.draw(canvas, snapshot, canvas_h, countdown_ms=countdown_ms)
+        self._hud_layer.draw(canvas, snapshot, canvas_h,
+                             countdown_ms=countdown_ms, error_message=error_message,
+                             my_color=my_color)
         self._table_layer.draw(canvas, snapshot, canvas_h)
 
         return canvas

@@ -173,7 +173,6 @@ class RealTimeArbiter:
 
     def _resolve_move(self, motion: Motion) -> list[ArrivalEvent | RestEvent]:
         """Regular MOVE: reports arrival + rest — GameEngine will move the piece and update state."""
-        self._airborne_pos = None
         self._active_rests.append((motion.piece, self._long_rest_ms))
         return [
             ArrivalEvent(

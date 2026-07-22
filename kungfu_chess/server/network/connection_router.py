@@ -269,6 +269,7 @@ class ConnectionRouter:
         if isinstance(command, RegisterCommand):
             result = await self._auth.register(command.username, command.password)
             if result.status == RegisterStatus.SUCCESS:
+                self._logged_in[conn_id] = (result.user.username, result.user.elo)
                 await self._send(conn_id, {"type": MSG_REGISTERED, "username": command.username})
             else:
                 await self._send_error(conn_id, result.message)
@@ -400,7 +401,14 @@ class ConnectionRouter:
     async def _send(self, conn_id: str, payload: dict) -> None:
         ws = self._connections.get(conn_id)
         if ws:
-            await ws.send(json.dumps(payload))
+            try:
+                await ws.send(json.dumps(payload))
+            except Exception:
+                # Connection may have closed between selection and send; the
+                # handler's finally-block will clean it up. Mirror the
+                # resilience of _broadcast_raw / _send_to_others so a single
+                # dead connection never tears down the dispatch loop.
+                logger.debug("Failed to send to %s (connection closed?)", conn_id)
 
     async def _send_to_others(self, room_id: str, exclude_conn_id: str, payload: dict) -> None:
         """Send payload to every connection in room_id except exclude_conn_id."""

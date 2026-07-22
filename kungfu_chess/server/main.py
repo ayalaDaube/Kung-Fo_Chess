@@ -23,7 +23,7 @@ async def _main() -> None:
     auth_service = AuthService(repo=repo, config=config.auth)
 
     def _session_factory() -> GameSession:
-        return GameSession(bus=EventBus())
+        return GameSession(bus=EventBus(), piece_scores=config.stats.piece_scores)
 
     router = ConnectionRouter(
         session_factory=_session_factory,

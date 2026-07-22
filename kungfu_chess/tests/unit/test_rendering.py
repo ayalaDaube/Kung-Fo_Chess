@@ -243,6 +243,14 @@ class TestSnapshotBuilder(unittest.TestCase):
         defaults.update(kwargs)
         return GameSnapshot(**defaults)
 
+    def test_winner_color_defaults_to_none(self):
+        s = self._make_snapshot()
+        self.assertIsNone(s.winner_color)
+
+    def test_winner_color_round_trips(self):
+        s = self._make_snapshot(game_over=True, winner_color=PieceColor.BLACK)
+        self.assertEqual(s.winner_color, PieceColor.BLACK)
+
     def test_snapshot_game_over_false(self):
         s = self._make_snapshot(game_over=False)
         self.assertFalse(s.game_over)
@@ -305,6 +313,70 @@ class TestGameStatsTrackerElimination(unittest.TestCase):
         tracker.process([event], delta_ms=0)
         self.assertEqual(tracker.scores[PieceColor.BLACK], 5)
         self.assertEqual(tracker.scores[PieceColor.WHITE], 0)
+
+
+# ---------------------------------------------------------------------------
+# hud_layer — game-over outcome text
+# ---------------------------------------------------------------------------
+
+class _FakeCanvas:
+    """Records put_text calls; matches img.Img's put_text signature."""
+    def __init__(self):
+        self.texts: list[str] = []
+
+    def put_text(self, txt, x, y, font_size, color=(255, 255, 255, 255), thickness=1):
+        self.texts.append(txt)
+
+
+class TestHudLayerGameOverOutcome(unittest.TestCase):
+    """
+    Regression coverage: after an opponent auto-resigns, the surviving
+    player used to see a bare "GAME OVER" with no indication of who won.
+    HudLayer must say "YOU WIN"/"YOU LOSE" whenever winner_color and the
+    viewer's own color are both known, and fall back to "GAME OVER" only
+    when the outcome isn't attributable (e.g. a natural king-capture end).
+    """
+
+    def _make_snapshot(self, **kwargs):
+        defaults = dict(
+            board_width=8, board_height=8, pieces=[],
+            selected_cell=None, game_over=True,
+            airborne_pos=None, scores={}, move_history=[],
+        )
+        defaults.update(kwargs)
+        return GameSnapshot(**defaults)
+
+    def _hud(self):
+        from kungfu_chess.ui.draw.hud_layer import HudLayer
+        return HudLayer(cell_size=100, offset_y=0, canvas_w=800, ui=None)
+
+    def test_you_win_when_winner_matches_my_color(self):
+        canvas = _FakeCanvas()
+        snap = self._make_snapshot(winner_color=PieceColor.WHITE)
+        self._hud().draw(canvas, snap, canvas_h=800, my_color=PieceColor.WHITE)
+        self.assertIn("YOU WIN", canvas.texts)
+
+    def test_you_lose_when_winner_is_the_opponent(self):
+        canvas = _FakeCanvas()
+        snap = self._make_snapshot(winner_color=PieceColor.BLACK)
+        self._hud().draw(canvas, snap, canvas_h=800, my_color=PieceColor.WHITE)
+        self.assertIn("YOU LOSE", canvas.texts)
+
+    def test_generic_game_over_when_winner_unknown(self):
+        """Natural king-capture ending: winner_color is None — no attribution to make up."""
+        canvas = _FakeCanvas()
+        snap = self._make_snapshot(winner_color=None)
+        self._hud().draw(canvas, snap, canvas_h=800, my_color=PieceColor.WHITE)
+        self.assertIn("GAME OVER", canvas.texts)
+        self.assertNotIn("YOU WIN", canvas.texts)
+        self.assertNotIn("YOU LOSE", canvas.texts)
+
+    def test_generic_game_over_when_my_color_unknown(self):
+        """Spectator (or color not yet known): can't say YOU WIN/LOSE either."""
+        canvas = _FakeCanvas()
+        snap = self._make_snapshot(winner_color=PieceColor.WHITE)
+        self._hud().draw(canvas, snap, canvas_h=800, my_color=None)
+        self.assertIn("GAME OVER", canvas.texts)
 
 
 if __name__ == "__main__":

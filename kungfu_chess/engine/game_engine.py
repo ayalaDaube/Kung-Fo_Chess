@@ -63,14 +63,25 @@ class GameEngine:
         self._game_over_policy = game_over_policy
         self._game_over = False
         self._selected_cell: Optional[Position] = None
+        self._winner_color: Optional[PieceColor] = None
 
-    def force_game_over(self) -> None:
-        """Force the game-over flag without a capture — used by resignation."""
+    def force_game_over(self, winner_color: Optional[PieceColor] = None) -> None:
+        """
+        Force the game-over flag without a capture — used by resignation.
+        winner_color is surfaced on the snapshot so clients can tell the
+        player the outcome (e.g. after an opponent's auto-resign) instead of
+        just a bare "GAME OVER" with no indication of who won.
+        """
         self._game_over = True
+        self._winner_color = winner_color
 
     @property
     def game_over(self) -> bool:
         return self._game_over
+
+    @property
+    def board(self) -> Board:
+        return self._board
 
     def get_piece_at(self, pos: Position):
         """Returns the piece at the given position, or None."""
@@ -108,6 +119,9 @@ class GameEngine:
             return MoveResult(False, MoveReason.EMPTY_SOURCE)
 
         if self._arbiter.has_active_motion(piece) or piece.state in (PieceState.LONG_REST, PieceState.SHORT_REST):
+            return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
+
+        if self._arbiter.airborne_position() is not None:
             return MoveResult(False, MoveReason.MOTION_IN_PROGRESS)
 
         self._arbiter.start_jump(piece, pos)
@@ -161,4 +175,5 @@ class GameEngine:
     def snapshot(self, selected_cell: Optional[Position] = None,
                  stats: Optional[StatsProvider] = None) -> GameSnapshot:
         """Returns a pixel-agnostic GameSnapshot. The only sanctioned way to read game state."""
-        return build_snapshot(self._board, self._arbiter, selected_cell, self._game_over, stats)
+        return build_snapshot(self._board, self._arbiter, selected_cell, self._game_over, stats,
+                              winner_color=self._winner_color)

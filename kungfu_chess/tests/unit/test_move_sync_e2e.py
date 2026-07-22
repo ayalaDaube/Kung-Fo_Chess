@@ -24,7 +24,7 @@ from kungfu_chess.server.config import RealtimeConfig
 from kungfu_chess.server.network.connection_router import ConnectionRouter
 from kungfu_chess.server.network.protocol import (
     CMD_CREATE_ROOM, CMD_JOIN_ROOM, CMD_MOVE,
-    MSG_ASSIGNED, MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_SNAPSHOT,
+    MSG_ASSIGNED, MSG_ERROR, MSG_ROOM_CREATED, MSG_ROOM_JOINED, MSG_SNAPSHOT,
 )
 from kungfu_chess.server.session.game_session import GameSession
 
@@ -44,6 +44,7 @@ _BOARD = """\
 """
 
 _RT_CFG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=5000)
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_engine() -> GameEngine:
@@ -53,7 +54,7 @@ def _make_engine() -> GameEngine:
 
 def _make_router() -> ConnectionRouter:
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
         realtime_config=_RT_CFG,
     )
 
@@ -79,6 +80,56 @@ async def _join_room(ws, room_id: str, username: str) -> str:
 
 
 class TestMoveSyncE2E(unittest.TestCase):
+
+    def test_rejected_move_reaches_snapshot_receiver_as_error(self):
+        """
+        Regression test for the "connection to the logic game can't connect
+        properly" bug: during live gameplay, MSG_ERROR from a rejected move
+        (e.g. moving the opponent's piece) flows over the exact same socket
+        as MSG_SNAPSHOT. SnapshotReceiver.feed() previously had no case for
+        MSG_ERROR at all, so the client silently dropped it — the player's
+        click appeared to do nothing, with no feedback of any kind.
+
+        This drives the real ConnectionRouter + real sockets, feeds every
+        incoming raw message through SnapshotReceiver exactly as
+        app.py's _network_loop does, and asserts pop_error() surfaces the
+        server's rejection reason.
+        """
+        async def _run():
+            router = _make_router()
+            async with websockets.serve(router.handle, _HOST, _PORT + 2):
+                uri = f"ws://{_HOST}:{_PORT + 2}"
+
+                ws_a = await websockets.connect(uri)
+                ws_b = await websockets.connect(uri)
+
+                await ws_a.send(json.dumps({"cmd": CMD_CREATE_ROOM}))
+                created = await _drain_until(ws_a, MSG_ROOM_CREATED)
+                room_id = created["room_id"]
+
+                color_a = await _join_room(ws_a, room_id, "alice")
+                await _join_room(ws_b, room_id, "bob")
+
+                # B attempts to move A's piece (the only pawn on the board).
+                ws_attacker = ws_b if color_a == "w" else ws_a
+                await ws_attacker.send(json.dumps({
+                    "cmd": CMD_MOVE,
+                    "from": {"row": 6, "col": 4},
+                    "to":   {"row": 5, "col": 4},
+                }))
+
+                error_msg = await _drain_until(ws_attacker, MSG_ERROR)
+
+                recv = SnapshotReceiver()
+                handled = recv.feed(json.dumps(error_msg))
+
+                await ws_a.close()
+                await ws_b.close()
+                return handled, recv.pop_error()
+
+        handled, reason = asyncio.run(_run())
+        self.assertTrue(handled, "SnapshotReceiver.feed() did not recognise MSG_ERROR")
+        self.assertEqual(reason, "not your piece")
 
     def test_player_b_snapshot_reflects_player_a_move(self):
         """

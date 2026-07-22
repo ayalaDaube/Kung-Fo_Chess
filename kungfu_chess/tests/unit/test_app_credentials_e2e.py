@@ -50,6 +50,7 @@ _AUTH_CFG = AuthConfig(
     sqlite_db_path=":memory:",
 )
 _RT_CFG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=5000)
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_router(auth: AuthService) -> ConnectionRouter:
@@ -57,7 +58,7 @@ def _make_router(auth: AuthService) -> ConnectionRouter:
         board = BoardParser().parse(_BOARD)
         return GameEngine(board=board, rule_engine=RuleEngine(), arbiter=RealTimeArbiter())
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_engine),
         realtime_config=_RT_CFG,
         auth_service=auth,
     )
@@ -150,12 +151,16 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
             async with websockets.serve(router.handle, _HOST, _PORT):
                 # Patch load_server_config so async_main connects to our test server.
                 from kungfu_chess.server import config as srv_cfg_mod
-                from kungfu_chess.server.config import ServerConfig, AuthConfig as AC, RealtimeConfig as RC, MatchmakingConfig as MC
+                from kungfu_chess.server.config import (
+                    ServerConfig, AuthConfig as AC, RealtimeConfig as RC,
+                    MatchmakingConfig as MC, StatsConfig as SC,
+                )
                 fake_srv_cfg = ServerConfig(
                     host=_HOST, port=_PORT,
                     auth=AC(default_starting_elo=1200, elo_k_factor=32, sqlite_db_path=":memory:"),
                     realtime=RC(tick_interval_ms=50, auto_resign_ms=5000),
                     matchmaking=MC(elo_range=100, elo_widen_step=50, widen_interval_ms=5000, timeout_ms=60000),
+                    stats=SC(piece_scores={"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}),
                 )
 
                 # We can't run the full render loop (no cv2 display in CI),
@@ -200,11 +205,11 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
         self.assertNotIn("local", all_output)
 
     def test_wrong_password_returns_none(self):
-        """Wrong password → async_main's pregame returns None (no room joined)."""
+        """Wrong password → user quits at retry prompt → run_pregame returns None."""
         auth = _make_auth(("user2", "correct"))
         router = _make_router(auth)
 
-        inputs = iter(["user2", AUTH_LOGIN])
+        inputs = iter(["user2", AUTH_LOGIN, ""])  # last "" = empty username at retry = quit
         output: list[str] = []
 
         async def _run():
@@ -219,8 +224,9 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                     _HOST, _PORT + 1,
                     username, password,
                     register=register,
-                    read=lambda: "",
+                    read=lambda: next(inputs),
                     write=lambda m: output.append(m),
+                    getpass_fn=lambda _: "wrong",
                 )
                 return result
 

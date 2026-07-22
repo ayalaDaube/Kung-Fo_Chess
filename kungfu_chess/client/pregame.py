@@ -88,10 +88,48 @@ def prompt_credentials(
 
 # ── low-level helpers ─────────────────────────────────────────────────────────
 
-async def _recv_until(ws: WS, *expected_types: str, timeout_s: float = 10.0) -> dict:
+async def _read_line(read: ReadFn) -> str:
+    """
+    Run a (possibly blocking) read callable — typically ``input`` waiting on
+    a real keypress — off the event loop thread.
+
+    BUG FIX: calling ``read()`` directly from inside an async function
+    blocks the *entire* asyncio event loop for as long as the user takes to
+    respond. While blocked, the client cannot process the WebSocket
+    connection at all — including replying to the server's keepalive pings.
+    If the user takes longer than the ping timeout (default 20s, e.g. two
+    players coordinating before both press a key), the server drops the
+    connection. The next ``ws.send``/``ws.recv`` then raises
+    ``ConnectionClosedError: no close frame received`` — this is the exact
+    bug reported with two players joining, and with "Join Room" seeming to
+    silently do nothing.
+
+    Running the read in a worker thread via ``asyncio.to_thread`` keeps the
+    event loop free to answer pings while we wait for the user.
+    """
+    return await asyncio.to_thread(read)
+
+
+class ServerError(RuntimeError):
+    """Raised by _recv_until when the server sends MSG_ERROR."""
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+async def _recv_until(
+    ws: WS, *expected_types: str, timeout_s: float = 10.0,
+    on_other: Callable[[dict], None] | None = None,
+) -> dict:
     """
     Read messages from ws until one whose 'type' is in expected_types arrives.
+    Raises ServerError immediately if MSG_ERROR arrives and is not in expected_types.
     Raises RuntimeError on timeout or connection close.
+
+    ``on_other``, if given, is called with every message that is skipped
+    while waiting (neither an expected type nor MSG_ERROR) — lets a caller
+    observe intervening messages (e.g. MSG_ASSIGNED while waiting for
+    MSG_MATCH_FOUND) without consuming them.
     """
     deadline = asyncio.get_event_loop().time() + timeout_s
     while True:
@@ -102,8 +140,13 @@ async def _recv_until(ws: WS, *expected_types: str, timeout_s: float = 10.0) -> 
             )
         raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         msg = json.loads(raw)
-        if msg.get("type") in expected_types:
+        msg_type = msg.get("type")
+        if msg_type in expected_types:
             return msg
+        if msg_type == MSG_ERROR and MSG_ERROR not in expected_types:
+            raise ServerError(msg.get("reason", "unknown error"))
+        if on_other is not None:
+            on_other(msg)
 
 
 # ── login / register ──────────────────────────────────────────────────────────
@@ -125,21 +168,30 @@ async def login_or_register(
     cmd = CMD_REGISTER if register else CMD_LOGIN
     await ws.send(json.dumps({"cmd": cmd, "username": username, "password": password}))
 
-    expected = (MSG_LOGGED_IN, MSG_REGISTERED, MSG_ERROR)
-    msg = await _recv_until(ws, *expected)
+    try:
+        msg = await _recv_until(ws, MSG_LOGGED_IN, MSG_REGISTERED)
+    except ServerError as exc:
+        write(f"Error: {exc.reason}")
+        logger.warning("Auth failed for %r: %s", username, exc.reason)
+        return False
 
-    if msg["type"] in (MSG_LOGGED_IN, MSG_REGISTERED):
-        action = "Registered" if register else "Logged in"
-        elo_part = f"  ELO: {msg['elo']}" if "elo" in msg else ""
-        write(f"{action} as {msg.get('username', username)!r}.{elo_part}")
-        logger.info("%s as %r (elo=%s)", action, msg.get('username', username),
-                    msg.get('elo', 'n/a'))
-        return True
+    if msg["type"] == MSG_REGISTERED:
+        # Registration succeeded — server has already marked the connection as
+        # logged in (Bug A fix), but we still need MSG_LOGGED_IN on the wire
+        # so the client knows the ELO.  Send CMD_LOGIN immediately.
+        logger.info("Registered as %r, auto-logging in", msg.get('username', username))
+        await ws.send(json.dumps({"cmd": CMD_LOGIN, "username": username, "password": password}))
+        try:
+            msg = await _recv_until(ws, MSG_LOGGED_IN)
+        except ServerError as exc:
+            write(f"Error: {exc.reason}")
+            return False
 
-    # MSG_ERROR
-    write(f"Error: {msg.get('reason', 'unknown error')}")
-    logger.warning("Auth failed for %r: %s", username, msg.get('reason', 'unknown error'))
-    return False
+    # MSG_LOGGED_IN
+    elo_part = f"  ELO: {msg['elo']}" if "elo" in msg else ""
+    write(f"Logged in as {msg.get('username', username)!r}.{elo_part}")
+    logger.info("Logged in as %r (elo=%s)", msg.get('username', username), msg.get('elo', 'n/a'))
+    return True
 
 
 # ── matchmaking ───────────────────────────────────────────────────────────────
@@ -157,8 +209,10 @@ async def find_match_flow(
     If ``cancel_event`` is set before a result arrives, sends CMD_CANCEL_MATCH
     and returns None.
 
-    Returns the MSG_MATCH_FOUND payload dict on success, None on timeout or
-    cancel.
+    Returns the MSG_MATCH_FOUND payload dict on success (with a "color" key
+    merged in from the MSG_ASSIGNED message the server sends just before
+    MSG_MATCH_FOUND — previously discarded here, leaving the caller with no
+    way to know which side it was assigned), None on timeout or cancel.
     """
     await ws.send(json.dumps({"cmd": CMD_FIND_MATCH}))
     write("Searching for an opponent… (press Enter to cancel)")
@@ -166,11 +220,24 @@ async def find_match_flow(
     if cancel_event is None:
         cancel_event = asyncio.Event()
 
+    assigned_color: str | None = None
+
+    def _capture_assigned(other_msg: dict) -> None:
+        nonlocal assigned_color
+        if other_msg.get("type") == MSG_ASSIGNED:
+            assigned_color = other_msg.get("color")
+
     async def _wait_for_match() -> dict | None:
-        return await _recv_until(
-            ws, MSG_MATCH_FOUND, MSG_MATCH_TIMEOUT,
-            timeout_s=recv_timeout_s,
-        )
+        try:
+            return await _recv_until(
+                ws, MSG_MATCH_FOUND, MSG_MATCH_TIMEOUT,
+                timeout_s=recv_timeout_s,
+                on_other=_capture_assigned,
+            )
+        except ServerError as exc:
+            write(f"Error: {exc.reason}")
+            logger.warning("Match error: %s", exc.reason)
+            return None
 
     async def _wait_for_cancel() -> None:
         await cancel_event.wait()
@@ -198,14 +265,17 @@ async def find_match_flow(
     except Exception:
         return None
 
+    if msg is None:
+        return None
+
     if msg["type"] == MSG_MATCH_FOUND:
         write(
             f"Match found!  Room: {msg['room_id']!r}  "
             f"Opponent: {msg.get('opponent', '?')!r}"
         )
-        logger.info("Match found — room=%r opponent=%r",
-                    msg['room_id'], msg.get('opponent', '?'))
-        return msg
+        logger.info("Match found — room=%r opponent=%r color=%s",
+                    msg['room_id'], msg.get('opponent', '?'), assigned_color)
+        return {**msg, "color": assigned_color}
 
     # MSG_MATCH_TIMEOUT
     write("No opponent found — match timed out.")
@@ -229,7 +299,7 @@ async def room_flow(
     Reuses the same WebSocket so the caller never needs a second connection.
     """
     write("Enter a room ID to join, or leave blank to create a new room:")
-    raw = read().strip()
+    raw = (await _read_line(read)).strip()
     room_id_hint = raw or None
 
     try:
@@ -275,35 +345,52 @@ async def run_pregame(
     register: bool = False,
     read: ReadFn = input,
     write: WriteFn = print,
+    getpass_fn: Callable[[str], str] | None = None,
     cancel_match_event: asyncio.Event | None = None,
     recv_timeout_s: float = 120.0,
 ) -> tuple[WS, str, str, str | None] | None:
     """
     Full pre-game flow on a single WebSocket connection:
-      1. Login or register.
+      1. Login or register, with retry on failure.
+         An empty username at the re-prompt exits cleanly.
       2. Show Play / Room menu.
       3. Return (ws, room_id, role, color) once a room is joined, or None.
 
-    Injected ``read`` / ``write`` replace stdin/stdout so tests never touch
-    real I/O.  ``cancel_match_event`` lets tests trigger CMD_CANCEL_MATCH
-    programmatically.
+    ``username``, ``password``, ``register`` seed the first attempt.
+    On failure the user is re-prompted via prompt_credentials().
+    Injected ``read`` / ``write`` / ``getpass_fn`` replace stdin/stdout so
+    tests never touch real I/O.
     """
-    uri = f"ws://{host}:{port}"
     import websockets
-    ws = await websockets.connect(uri)
+    ws = await websockets.connect(f"ws://{host}:{port}")
 
-    # Step 1 — auth
-    ok = await login_or_register(
-        ws, username, password, register=register, write=write
-    )
-    if not ok:
-        await ws.close()
-        return None
+    # Step 1 — auth with retry
+    while True:
+        ok = await login_or_register(
+            ws, username, password, register=register, write=write
+        )
+        if ok:
+            break
+        # Auth failed — re-prompt; empty username or 'q' quits
+        write("Enter empty username to quit, or try again.")
+        raw_username = (await _read_line(read)).strip()
+        if not raw_username or raw_username.lower() == MENU_QUIT:
+            await ws.close()
+            return None
+        # Re-use prompt_credentials for auth-choice + password, seeding username
+        # from what was just read so the user isn't asked twice.
+        write(f"[{AUTH_LOGIN}] Login  [{AUTH_REGISTER}] Register")
+        auth_choice = (await _read_line(read)).strip()
+        register = (auth_choice == AUTH_REGISTER)
+        import getpass as _getpass
+        _gp = getpass_fn if getpass_fn is not None else _getpass.getpass
+        password = await asyncio.to_thread(_gp, "Password: ")
+        username = raw_username
 
     # Step 2 — menu loop
     while True:
         write(f"\n[{MENU_PLAY}] Play  [{MENU_ROOM}] Room  [{MENU_QUIT}] Quit")
-        choice = read().strip().lower()
+        choice = (await _read_line(read)).strip().lower()
 
         if choice == MENU_QUIT:
             await ws.close()
@@ -317,20 +404,15 @@ async def run_pregame(
                 recv_timeout_s=recv_timeout_s,
             )
             if result is None:
-                # Timed out or cancelled — loop back to menu
                 continue
-            # Matched: server already joined us to a room via _on_match;
-            # drain the MSG_ROOM_JOINED + MSG_ASSIGNED that arrived before
-            # MSG_MATCH_FOUND (see connection_router._on_match message order).
             room_id = result["room_id"]
-            return ws, room_id, "player", None   # color already printed by server
+            return ws, room_id, "player", result.get("color")
 
         if choice == MENU_ROOM:
             result = await room_flow(ws, username, read=read, write=write)
             if result is not None:
                 room_id, role, color = result
                 return ws, room_id, role, color
-            # Error already printed — loop back to menu
             continue
 
         write(f"Unknown choice {choice!r}. Please enter {MENU_PLAY}, {MENU_ROOM}, or {MENU_QUIT}.")

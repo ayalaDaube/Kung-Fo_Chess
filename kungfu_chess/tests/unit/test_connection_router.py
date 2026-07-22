@@ -48,6 +48,7 @@ _RT_CONFIG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=_load_cfg().real
 # Short auto_resign_ms for tests that exercise the resign/room-cleanup path.
 _RT_CONFIG_FAST_RESIGN = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=50)
 _MM_CFG = MatchmakingConfig(elo_range=500, elo_widen_step=50, widen_interval_ms=20, timeout_ms=5000)
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 class FakeWebSocket:
@@ -78,7 +79,7 @@ def _make_router(auth=None) -> ConnectionRouter:
         return f"room-{counter[0]}"
 
     def _session_factory():
-        return GameSession(bus=EventBus(), engine_factory=_make_engine)
+        return GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine)
 
     return ConnectionRouter(
         session_factory=_session_factory,
@@ -101,7 +102,7 @@ def _make_router_with_matchmaking() -> ConnectionRouter:
         return f"room-{counter[0]}"
 
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
         realtime_config=_RT_CONFIG_FAST_RESIGN,
         room_id_generator=_room_id_gen,
         matchmaking_config=_MM_CFG,
@@ -284,6 +285,21 @@ class TestAuthRouting(unittest.TestCase):
         msg = json.loads(ws.sent[0])
         self.assertEqual(msg["type"], MSG_REGISTERED)
 
+    def test_register_authenticates_connection(self):
+        """Bug A: after CMD_REGISTER succeeds the connection must be in _logged_in
+        so a subsequent CMD_CREATE_ROOM (or CMD_FIND_MATCH) works without a
+        separate CMD_LOGIN."""
+        router, _ = _make_router_with_auth()
+        ws = FakeWebSocket(messages=[
+            _msg(cmd=CMD_REGISTER, username="newuser", password="pw"),
+            _msg(cmd=CMD_CREATE_ROOM),
+        ])
+        run(router.handle(ws))
+        types = [json.loads(m)["type"] for m in ws.sent]
+        self.assertIn(MSG_REGISTERED, types)
+        self.assertIn(MSG_ROOM_CREATED, types)
+        self.assertNotIn(MSG_ERROR, types)
+
     def test_login_sends_logged_in(self):
         router, auth = _make_router_with_auth()
         run(auth.register("alice", "secret"))
@@ -386,7 +402,7 @@ class TestAutoResignRoomCleanup(unittest.TestCase):
     def test_room_removed_after_auto_resign(self):
         async def _go():
             router = ConnectionRouter(
-                session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+                session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
                 realtime_config=_RT_CONFIG_FAST_RESIGN,
                 room_id_generator=lambda: "resign-room",
             )
@@ -410,7 +426,7 @@ class TestAutoResignRoomCleanup(unittest.TestCase):
     def test_snapshot_game_over_true_after_resign(self):
         async def _go():
             router = ConnectionRouter(
-                session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+                session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
                 realtime_config=_RT_CONFIG_FAST_RESIGN,
                 room_id_generator=lambda: "resign-room-2",
             )

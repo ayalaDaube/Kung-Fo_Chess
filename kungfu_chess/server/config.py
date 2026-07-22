@@ -25,6 +25,10 @@ _MATCHMAKING_DEFAULTS = {
     "timeout_ms": 60000,
 }
 
+_STATS_DEFAULTS = {
+    "piece_scores": {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0},
+}
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -48,12 +52,18 @@ class MatchmakingConfig:
 
 
 @dataclass(frozen=True)
+class StatsConfig:
+    piece_scores: dict
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str
     port: int
     auth: AuthConfig
     realtime: RealtimeConfig
     matchmaking: MatchmakingConfig
+    stats: StatsConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -67,6 +77,7 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
     auth_raw = {**_AUTH_DEFAULTS, **data.get("auth", {})}
     realtime_raw = {**_REALTIME_DEFAULTS, **data.get("realtime", {})}
     mm_raw = {**_MATCHMAKING_DEFAULTS, **data.get("matchmaking", {})}
+    stats_raw = {**_STATS_DEFAULTS, **data.get("stats", {})}
     return ServerConfig(
         host=merged["host"],
         port=merged["port"],
@@ -84,5 +95,8 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
             elo_widen_step=mm_raw["elo_widen_step"],
             widen_interval_ms=mm_raw["widen_interval_ms"],
             timeout_ms=mm_raw["timeout_ms"],
+        ),
+        stats=StatsConfig(
+            piece_scores=stats_raw["piece_scores"],
         ),
     )

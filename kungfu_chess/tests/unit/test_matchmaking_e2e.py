@@ -47,6 +47,7 @@ _MM_CFG = MatchmakingConfig(
     timeout_ms=5000,
 )
 _RT_CFG = RealtimeConfig(tick_interval_ms=50, auto_resign_ms=200)  # short for tests
+_PIECE_SCORES = {"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}
 
 
 def _make_engine() -> GameEngine:
@@ -56,7 +57,7 @@ def _make_engine() -> GameEngine:
 
 def _make_router(auth: AuthService) -> ConnectionRouter:
     return ConnectionRouter(
-        session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+        session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
         realtime_config=_RT_CFG,
         auth_service=auth,
         matchmaking_config=_MM_CFG,
@@ -240,7 +241,7 @@ class TestMatchmakingTimeout(unittest.TestCase):
             auth = AuthService(repo=repo, config=_AUTH_CFG)
             await auth.register("carol", "pw")
             router = ConnectionRouter(
-                session_factory=lambda: GameSession(bus=EventBus(), engine_factory=_make_engine),
+                session_factory=lambda: GameSession(bus=EventBus(), piece_scores=_PIECE_SCORES, engine_factory=_make_engine),
                 realtime_config=_RT_CFG,
                 auth_service=auth,
                 matchmaking_config=_MM_CFG_SHORT_TIMEOUT,

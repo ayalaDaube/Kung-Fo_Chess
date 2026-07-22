@@ -168,5 +168,75 @@ class TestRealTimeArbiter(unittest.TestCase):
         self.assertNotEqual(wR.state, PieceState.CAPTURED)
 
 
+class TestAirborneBug2a(unittest.TestCase):
+    """
+    Bug 2a: _resolve_move() used to unconditionally clear _airborne_pos,
+    wiping the airborne marker of an unrelated jumping piece.
+    """
+
+    def test_unrelated_move_does_not_clear_airborne_marker(self):
+        """
+        wK jumps (duration 2000 ms).  wR moves one square (arrives at 500 ms).
+        After the rook arrives, the king must still be marked airborne.
+        """
+        engine, board = make_engine("wK . .\nwR . .", ms_per_square=500, jump_duration_ms=2000)
+        engine.request_jump(Position(0, 0))    # wK airborne for 2000 ms
+        engine.request_move(Position(1, 0), Position(1, 1))  # wR moves, arrives at 500 ms
+        engine.wait(500)   # rook arrives — must NOT clear king's airborne marker
+        self.assertEqual(engine._arbiter.airborne_position(), Position(0, 0))
+
+    def test_airborne_clears_only_when_jump_resolves(self):
+        """
+        After the jump duration expires the marker must be gone.
+        """
+        engine, board = make_engine("wK . .\nwR . .", ms_per_square=500, jump_duration_ms=1000)
+        engine.request_jump(Position(0, 0))
+        engine.request_move(Position(1, 0), Position(1, 1))
+        engine.wait(500)   # rook arrives — king still airborne
+        self.assertIsNotNone(engine._arbiter.airborne_position())
+        engine.wait(500)   # jump resolves
+        self.assertIsNone(engine._arbiter.airborne_position())
+
+
+class TestAirborneBug2b(unittest.TestCase):
+    """
+    Bug 2b (design a): only one piece may be airborne at a time.
+    A second jump while _airborne_pos is set must be rejected.
+    """
+
+    def test_second_jump_rejected_while_first_airborne(self):
+        """
+        wK jumps successfully.  wR attempts to jump while wK is still airborne
+        — must be rejected (MOTION_IN_PROGRESS).
+        """
+        from kungfu_chess.engine.game_engine import MoveReason
+        engine, board = make_engine("wK .\nwR .", jump_duration_ms=2000)
+        result1 = engine.request_jump(Position(0, 0))   # wK jumps
+        result2 = engine.request_jump(Position(1, 0))   # wR tries to jump
+        self.assertTrue(result1.is_accepted)
+        self.assertFalse(result2.is_accepted)
+        self.assertEqual(result2.reason, MoveReason.MOTION_IN_PROGRESS)
+
+    def test_second_jump_accepted_after_first_lands(self):
+        """
+        After the first jump resolves, a new jump must be accepted.
+        """
+        engine, board = make_engine("wK .\nwR .", jump_duration_ms=500)
+        engine.request_jump(Position(0, 0))
+        engine.wait(500)   # wK lands
+        self.assertIsNone(engine._arbiter.airborne_position())
+        result = engine.request_jump(Position(1, 0))
+        self.assertTrue(result.is_accepted)
+
+    def test_airborne_marker_not_overwritten_by_rejected_jump(self):
+        """
+        The rejected second jump must not change _airborne_pos.
+        """
+        engine, board = make_engine("wK .\nwR .", jump_duration_ms=2000)
+        engine.request_jump(Position(0, 0))
+        engine.request_jump(Position(1, 0))   # rejected
+        self.assertEqual(engine._arbiter.airborne_position(), Position(0, 0))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

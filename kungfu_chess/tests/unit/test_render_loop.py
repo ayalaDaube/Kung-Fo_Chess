@@ -40,7 +40,14 @@ def _fake_snapshot() -> GameSnapshot:
 
 
 class _FakeRenderer:
-    def render(self, snapshot, delta_ms=0, countdown_ms=None) -> _FakeFrame:
+    def __init__(self):
+        self.error_messages: list = []
+        self.rendered_snapshots: list = []
+
+    def render(self, snapshot, delta_ms=0, countdown_ms=None, error_message=None,
+               my_color=None) -> _FakeFrame:
+        self.error_messages.append(error_message)
+        self.rendered_snapshots.append(snapshot)
         return _FakeFrame()
 
 
@@ -151,6 +158,142 @@ class TestRenderLoopBasic(unittest.TestCase):
         )
         asyncio.run(coro)
         self.assertEqual(len(frames), 0)
+
+
+class TestRenderLoopSelectionOverlay(unittest.TestCase):
+    """
+    Regression coverage: the server's broadcast snapshot is shared by both
+    players (and spectators), so its selected_cell is always None — the
+    server has no notion of "your" selection specifically. Previously the
+    render loop passed the snapshot straight through, so the "selected"
+    highlight never appeared for anyone. It must now be overlaid locally
+    from the Controller's own selection state.
+    """
+
+    def test_local_selection_is_overlaid_when_snapshot_has_none(self):
+        renderer = _FakeRenderer()
+
+        class _SelectingController:
+            selected_cell = Position(2, 3)
+
+        call_count = [0]
+
+        def _key(d):
+            call_count[0] += 1
+            return 27 if call_count[0] >= 1 else -1
+
+        coro = run_render_loop(
+            get_snapshot=_fake_snapshot,   # selected_cell=None
+            renderer=renderer,
+            controller=_SelectingController(),
+            window_title="test",
+            frame_interval_ms=1,
+            show_frame=lambda t, i: None,
+            wait_key=_key,
+        )
+        asyncio.run(coro)
+
+        self.assertEqual(len(renderer.rendered_snapshots), 1)
+        self.assertEqual(renderer.rendered_snapshots[0].selected_cell, Position(2, 3))
+
+    def test_server_selected_cell_wins_when_present(self):
+        """If the server ever does send a selected_cell, don't clobber it."""
+        renderer = _FakeRenderer()
+
+        def _snapshot_with_selection():
+            return GameSnapshot(
+                board_width=8, board_height=8,
+                pieces=[], selected_cell=Position(0, 0),
+                game_over=False, airborne_pos=None,
+            )
+
+        class _SelectingController:
+            selected_cell = Position(2, 3)
+
+        call_count = [0]
+
+        def _key(d):
+            call_count[0] += 1
+            return 27 if call_count[0] >= 1 else -1
+
+        coro = run_render_loop(
+            get_snapshot=_snapshot_with_selection,
+            renderer=renderer,
+            controller=_SelectingController(),
+            window_title="test",
+            frame_interval_ms=1,
+            show_frame=lambda t, i: None,
+            wait_key=_key,
+        )
+        asyncio.run(coro)
+
+        self.assertEqual(renderer.rendered_snapshots[0].selected_cell, Position(0, 0))
+
+
+class TestRenderLoopPopError(unittest.TestCase):
+    """
+    Regression coverage: a rejected command (MSG_ERROR, surfaced via
+    SnapshotReceiver.pop_error) must reach the renderer instead of being
+    silently dropped — previously nothing consumed it at all.
+    """
+
+    def test_pop_error_is_forwarded_to_renderer_and_latched(self):
+        """
+        pop_error() returning a value once must still be visible to the
+        renderer on subsequent frames (latched for ERROR_DISPLAY_MS), not
+        just the one frame it was popped on.
+        """
+        renderer = _FakeRenderer()
+        call_count = [0]
+        popped = ["not your piece"]   # only has an error on the first pop
+
+        def _pop_error():
+            if popped:
+                return popped.pop(0)
+            return None
+
+        def _key(d):
+            call_count[0] += 1
+            return 27 if call_count[0] >= 3 else -1
+
+        coro = run_render_loop(
+            get_snapshot=_fake_snapshot,
+            renderer=renderer,
+            controller=_FakeController(),
+            window_title="test",
+            frame_interval_ms=1,
+            show_frame=lambda t, i: None,
+            wait_key=_key,
+            pop_error=_pop_error,
+        )
+        asyncio.run(coro)
+
+        self.assertGreaterEqual(len(renderer.error_messages), 2)
+        self.assertEqual(renderer.error_messages[0], "not your piece")
+        # Still latched on the next frame even though pop_error() now returns None.
+        self.assertEqual(renderer.error_messages[1], "not your piece")
+
+    def test_no_error_by_default(self):
+        """Without a pop_error callable, error_message stays None (default lambda)."""
+        renderer = _FakeRenderer()
+        call_count = [0]
+
+        def _key(d):
+            call_count[0] += 1
+            return 27 if call_count[0] >= 2 else -1
+
+        coro = run_render_loop(
+            get_snapshot=_fake_snapshot,
+            renderer=renderer,
+            controller=_FakeController(),
+            window_title="test",
+            frame_interval_ms=1,
+            show_frame=lambda t, i: None,
+            wait_key=_key,
+        )
+        asyncio.run(coro)
+
+        self.assertTrue(all(msg is None for msg in renderer.error_messages))
 
 
 class TestRenderLoopConcurrency(unittest.TestCase):

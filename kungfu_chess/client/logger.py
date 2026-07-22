@@ -42,3 +42,4 @@ def setup_client_logging(log_path: str, level: int = logging.DEBUG) -> None:
     ))
     client_logger.setLevel(level)
     client_logger.addHandler(handler)
+    client_logger.propagate = False

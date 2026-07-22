@@ -39,6 +39,7 @@ from kungfu_chess.client.snapshot_receiver import SnapshotReceiver
 from kungfu_chess.config_loader import load_config
 from kungfu_chess.input.board_mapper import BoardMapper
 from kungfu_chess.input.controller import Controller
+from kungfu_chess.model.piece import PieceColor
 from kungfu_chess.server.config import load_server_config
 from kungfu_chess.ui.renderer import Renderer
 
@@ -134,6 +135,7 @@ async def async_main(
 
     ws, room_id, role, color = result
     is_player = (role == "player")
+    my_color = PieceColor(color) if color is not None else None
     logger.info("Joined room %s as %s (color=%s)", room_id, role, color)
 
     # ── Step 4: open the graphical window ─────────────────────────────────────
@@ -169,6 +171,8 @@ async def async_main(
         is_player=is_player,
         get_countdown_ms=lambda: receiver.countdown_ms,
         command_queue=command_queue,
+        pop_error=receiver.pop_error,
+        my_color=my_color,
     )
 
     render_task  = asyncio.ensure_future(render_coro)

@@ -13,6 +13,7 @@ SRP: this module knows nothing about WebSocket protocol details or game rules.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 SnapshotProviderProtocol = Any
 RendererProtocol         = Any
 ControllerProtocol       = Any
+
+ERROR_DISPLAY_MS = 2500
 
 
 def _command_to_wire(cmd) -> Optional[str]:
@@ -58,6 +61,8 @@ async def run_render_loop(
     is_player: bool = True,
     get_countdown_ms: Callable[[], Optional[int]] = lambda: None,
     command_queue: Optional[asyncio.Queue] = None,
+    pop_error: Callable[[], Optional[str]] = lambda: None,
+    my_color: Any = None,
 ) -> None:
     """
     Drive one render frame per ``frame_interval_ms``, then yield.
@@ -96,12 +101,27 @@ async def run_render_loop(
         commands are expected (spectator mode or tests that don't need it).
         Using a caller-owned queue means multiple independent loop
         invocations never share state.
+    pop_error
+        Zero-argument callable returning the latest rejected-command reason
+        (from SnapshotReceiver.pop_error), or None if none is pending.
+        Each call consumes the pending error, so the loop latches it into
+        a locally-ticking display for ERROR_DISPLAY_MS — otherwise a
+        rejected move (wrong piece, resting piece, illegal move, ...) would
+        vanish with no on-screen feedback at all.
+    my_color
+        This client's own assigned PieceColor (or None for a spectator, or
+        before it is known). Threaded through to the renderer so a
+        resignation game-over can say "YOU WIN"/"YOU LOSE" instead of a
+        bare "GAME OVER" with no indication of the outcome.
     """
     interval_s = frame_interval_ms / 1000.0
     last = time.monotonic()
     # Local countdown: ticks down each frame from the server-supplied value.
     _local_countdown: Optional[int] = None
     _last_server_countdown: Optional[int] = None
+    # Local error display: latched for ERROR_DISPLAY_MS after each MSG_ERROR.
+    _error_text: Optional[str] = None
+    _error_remaining_ms = 0
 
     while True:
         now      = time.monotonic()
@@ -116,10 +136,30 @@ async def run_render_loop(
         elif _local_countdown is not None:
             _local_countdown = max(0, _local_countdown - delta_ms)
 
+        new_error = pop_error()
+        if new_error is not None:
+            _error_text = new_error
+            _error_remaining_ms = ERROR_DISPLAY_MS
+        elif _error_remaining_ms > 0:
+            _error_remaining_ms = max(0, _error_remaining_ms - delta_ms)
+
         snapshot = get_snapshot()
         if snapshot is not None:
-            frame = renderer.render(snapshot, delta_ms=delta_ms,
-                                    countdown_ms=_local_countdown)
+            # The server's broadcast snapshot is shared by both players (and
+            # any spectators), so it can never carry a per-viewer selection —
+            # selected_cell arrives as None. Overlay this client's own local
+            # selection (tracked by Controller from its own clicks) so the
+            # "selected" highlight is visible again.
+            local_selected = getattr(controller, "selected_cell", None)
+            if snapshot.selected_cell is None and local_selected is not None:
+                snapshot = dataclasses.replace(snapshot, selected_cell=local_selected)
+
+            frame = renderer.render(
+                snapshot, delta_ms=delta_ms,
+                countdown_ms=_local_countdown,
+                error_message=_error_text if _error_remaining_ms > 0 else None,
+                my_color=my_color,
+            )
             show_frame(window_title, frame.img)
 
         # Drain all queued commands and send them.
