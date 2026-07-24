@@ -30,7 +30,7 @@ class HudLayer:
         elif countdown_ms is not None:
             self._draw_countdown(canvas, canvas_h, countdown_ms)
         elif error_message:
-            self._draw_error(canvas, canvas_h, error_message)
+            self._draw_error(canvas, canvas_h, error_message, my_color)
 
     def _draw_scores(self, canvas: Img, snapshot: GameSnapshot) -> None:
         cs         = self._cell_size
@@ -68,9 +68,46 @@ class HudLayer:
                         color=self._game_over_color,
                         thickness=self._game_over_thickness)
 
-    def _draw_error(self, canvas: Img, canvas_h: int, message: str) -> None:
-        """Transient feedback for a rejected move — see render_loop's ERROR_DISPLAY_MS."""
-        canvas.put_text(f"Move rejected: {message}", self._canvas_w // 6, canvas_h // 2,
-                        font_size=self._game_over_font_size * 0.5,
-                        color=self._game_over_color,
-                        thickness=2)
+    def _draw_error(self, canvas: Img, canvas_h: int, message: str,
+                     my_color: PieceColor | None = None) -> None:
+        """Transient feedback for a rejected move — centred on the board, large, player-coloured."""
+        import cv2
+        import numpy as np
+
+        # Choose a colour that matches the player's side so it feels personal.
+        if my_color == PieceColor.WHITE:
+            text_color = (80, 200, 255, 255)   # warm gold (BGR)
+        elif my_color == PieceColor.BLACK:
+            text_color = (255, 200, 80, 255)   # cool blue (BGR)
+        else:
+            text_color = (0, 220, 255, 255)    # neutral yellow
+
+        fsz       = self._game_over_font_size
+        thickness = self._game_over_thickness
+        font      = cv2.FONT_HERSHEY_SIMPLEX
+
+        # Measure the rendered text so we can centre it.
+        (tw, th), baseline = cv2.getTextSize(message, font, fsz, thickness)
+
+        # Place the baseline 1.5 cell-heights above the bottom of the canvas.
+        margin = int(self._cell_size * 1.5)
+        text_x = max(0, (self._canvas_w - tw) // 2)
+        text_y = canvas_h - margin
+
+        # Draw a dark translucent backing strip for legibility.
+        pad    = int(self._cell_size * 0.25)
+        strip_y1 = max(0, text_y - th - pad)
+        strip_y2 = min(canvas_h, text_y + baseline + pad)
+        strip_x1 = max(0, text_x - pad)
+        strip_x2 = min(self._canvas_w, text_x + tw + pad)
+        if canvas.img is not None and strip_y2 > strip_y1 and strip_x2 > strip_x1:
+            roi = canvas.img[strip_y1:strip_y2, strip_x1:strip_x2]
+            dark = np.zeros_like(roi)
+            alpha = 0.55
+            canvas.img[strip_y1:strip_y2, strip_x1:strip_x2] = (
+                roi.astype(np.float32) * (1 - alpha)
+                + dark.astype(np.float32) * alpha
+            ).astype(np.uint8)
+
+        canvas.put_text(message, text_x, text_y,
+                        font_size=fsz, color=text_color, thickness=thickness)
