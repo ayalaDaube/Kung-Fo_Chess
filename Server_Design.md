@@ -24,17 +24,10 @@
 - **Game duration -> Docker roles**: 60s average games mean rooms must stay
   cheap in-memory tasks, never containers — Game Node *containers* are
   long-lived and host thousands of those tasks each.
-- **Future-proofing**: binary board encoding is already safe (text-parsing is
-  isolated from game logic). Custom user-defined pieces are *mostly* already
-  supported (movement rules and promotion behavior are both swappable via
-  injection today) — the one real gap is that piece kinds are a closed enum.
-- **Code quality**: DRY/SRP/config-driven-constants are solid. Encapsulation
-  is solid *now*, after a real violation was caught and fixed earlier in this
-  project — worth knowing it happened, not just claiming it never did.
 
 ---
 
-# Part A — Cloud/Server Design for Scale
+# Cloud/Server Design for Scale
 
 ### The core numbers
 
@@ -54,9 +47,6 @@ concurrency by itself.
 
 ### 1. Database
 
-SQLite is a single file with a single-writer lock — no replication, no
-sharding, no network access. Fine for local dev; can't come close to serving
-~166,000 ELO writes/sec from a distributed fleet. Replace with:
 - A **sharded relational store** (sharded Postgres, or NewSQL like
   CockroachDB/Spanner) for accounts + ELO — relational because an ELO update
   is an atomic read-modify-write across two users' ratings, which is exactly
@@ -182,6 +172,3 @@ seconds); anything that stops responding is automatically replaced and
 routed around. This is a standard feature of whatever tool manages the
 container fleet (e.g. Kubernetes) — not something built by hand for this
 project.
-
----
-

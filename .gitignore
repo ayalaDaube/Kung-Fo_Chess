@@ -429,3 +429,7 @@ FodyWeavers.xsd
 *.msp
 __pycache__/
 *.pyc
+kungfu_chess.db
+kungfu_chess.db-wal
+kungfu_chess.db-shm
+*.egg-info/
