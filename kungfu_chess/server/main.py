@@ -8,6 +8,7 @@ import websockets
 
 from kungfu_chess.server.config import load_server_config
 from kungfu_chess.server.auth.auth_service import AuthService
+from kungfu_chess.server.auth.elo_service import EloService
 from kungfu_chess.server.auth.db import SqliteUserRepository
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.logging_.activity_logger import ActivityLogger
@@ -22,6 +23,7 @@ async def _main() -> None:
 
     repo = SqliteUserRepository(config.auth.sqlite_db_path)
     auth_service = AuthService(repo=repo, config=config.auth)
+    elo_service = EloService(repo=repo, config=config.auth)
     activity_logger = ActivityLogger(config.logging.log_path)
 
     def _session_factory() -> GameSession:
@@ -31,6 +33,7 @@ async def _main() -> None:
         session_factory=_session_factory,
         realtime_config=config.realtime,
         auth_service=auth_service,
+        elo_service=elo_service,
         matchmaking_config=config.matchmaking,
         activity_logger=activity_logger,
     )

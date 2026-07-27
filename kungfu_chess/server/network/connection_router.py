@@ -21,6 +21,7 @@ import time
 from typing import Any, Callable
 
 from kungfu_chess.server.auth.auth_service import AuthService, RegisterStatus, LoginStatus
+from kungfu_chess.server.auth.elo_service import EloService
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.bus import topics
 from kungfu_chess.server.logging_.activity_logger import ActivityLogger
@@ -71,6 +72,7 @@ class ConnectionRouter:
         session_factory: SessionFactory,
         realtime_config: RealtimeConfig,
         auth_service: AuthService | None = None,
+        elo_service: EloService | None = None,
         matchmaking_config: MatchmakingConfig | None = None,
         room_id_generator: RoomIdGenerator = _default_room_id_generator,
         activity_logger: ActivityLogger | None = None,
@@ -78,6 +80,7 @@ class ConnectionRouter:
         self._session_factory = session_factory
         self._realtime_config = realtime_config
         self._auth = auth_service
+        self._elo = elo_service
         self._room_id_generator = room_id_generator
         self._activity_logger = activity_logger
 
@@ -419,11 +422,11 @@ class ConnectionRouter:
         if session is None:
             return
         snapshot = await session.resign(username)
-        # Apply ELO update if auth is wired and both players are known.
-        if self._auth is not None:
+        # Apply ELO update if elo service is wired and both players are known.
+        if self._elo is not None:
             winner = session.other_player_username(username)
             if winner is not None:
-                await self._auth.apply_elo_update(winner, username)
+                await self._elo.apply_elo_update(winner, username)
         await self._broadcast_snapshot(room_id, snapshot)
         # FIX 3c: tear down the room after resign (mirrors cancel_room)
         self.cancel_room(room_id)

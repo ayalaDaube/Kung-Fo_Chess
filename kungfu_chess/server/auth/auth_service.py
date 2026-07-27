@@ -1,5 +1,5 @@
 """
-Authentication and ELO service.
+Authentication service — registration and login only.
 No WebSocket, JSON, or protocol knowledge. No direct SQLite access.
 All blocking DB calls are wrapped in asyncio.to_thread at the call site here.
 """
@@ -92,23 +92,3 @@ class AuthService:
             return LoginResult(LoginStatus.INVALID_CREDENTIALS, None)
         return LoginResult(LoginStatus.SUCCESS, user)
 
-    async def apply_elo_update(self, winner_username: str, loser_username: str) -> None:
-        """Updates both players' ELO using the standard formula. K-factor from config."""
-        winner = await asyncio.to_thread(self._repo.get_user_by_username, winner_username)
-        loser  = await asyncio.to_thread(self._repo.get_user_by_username, loser_username)
-        if winner is None or loser is None:
-            logger.warning("ELO update skipped: unknown user(s) %r %r", winner_username, loser_username)
-            return
-
-        k = self._config.elo_k_factor
-        win_probability  = 1.0 / (1.0 + 10 ** ((loser.elo - winner.elo) / 400.0))
-        lose_probability = 1.0 - win_probability
-
-        actual_winner_score = 1.0   # won
-        actual_loser_score  = 0.0   # lost
-
-        new_winner_elo = round(winner.elo + k * (actual_winner_score - win_probability))
-        new_loser_elo  = round(loser.elo  + k * (actual_loser_score  - lose_probability))
-
-        await asyncio.to_thread(self._repo.update_elo, winner_username, new_winner_elo)
-        await asyncio.to_thread(self._repo.update_elo, loser_username,  new_loser_elo)
