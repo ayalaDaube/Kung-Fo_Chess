@@ -48,7 +48,7 @@ class AuthHandler:
         result = await self._auth.register(command.username, command.password)
         if result.status == RegisterStatus.SUCCESS:
             self._registry.mark_logged_in(conn_id, result.user.username, result.user.elo)
-            await self._send(conn_id, {"type": MSG_REGISTERED, "username": command.username})
+            await self._send(conn_id, {"type": MSG_REGISTERED, "username": result.user.username, "elo": result.user.elo})
             if self._activity_logger is not None:
                 await self._activity_logger.log(
                     "auth_register",

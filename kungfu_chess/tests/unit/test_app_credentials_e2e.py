@@ -155,6 +155,7 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                 from kungfu_chess.server.config import (
                     ServerConfig, AuthConfig as AC, RealtimeConfig as RC,
                     MatchmakingConfig as MC, StatsConfig as SC, LoggingConfig as LGC,
+                    DatabaseConfig as DC, RedisConfig as RCC,
                 )
                 fake_srv_cfg = ServerConfig(
                     host=_HOST, port=_PORT,
@@ -163,6 +164,8 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                     matchmaking=MC(elo_range=100, elo_widen_step=50, widen_interval_ms=5000, timeout_ms=60000),
                     stats=SC(piece_scores={"P": 1, "N": 3, "B": 3, "R": 5, "Q": 9, "K": 0}),
                     logging=LGC(log_path="test_activity.log"),
+                    database=DC(host="localhost", port=5432, user="kungfu", password="changeme", dbname="kungfu_chess"),
+                    redis=RCC(host="localhost", port=6379, elo_ttl_seconds=300),
                 )
 
                 # We can't run the full render loop (no cv2 display in CI),

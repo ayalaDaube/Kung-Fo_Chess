@@ -590,5 +590,57 @@ class TestRunPregameAuthRetry(unittest.TestCase):
         self.assertTrue(any("Error" in line or "error" in line for line in out.lines))
 
 
+# ── Test: slow credential entry does not drop the connection ─────────────────
+
+class TestSlowCredentialEntry(unittest.TestCase):
+    """
+    Bug 2 regression: blocking read() calls inside async code froze the event
+    loop, preventing the WebSocket keepalive ping/pong from being processed.
+    The server would force-close the connection while the user was still
+    typing, causing a silent hang on the next ws.send/recv.
+
+    This test simulates a slow user by injecting a read() that sleeps for
+    longer than a typical ping interval before returning.  The WebSocket
+    connection must still be alive and usable after the delay.
+    """
+
+    def test_slow_read_does_not_drop_connection(self):
+        """
+        A read() that takes 0.3 s (simulating a slow typist) must not cause
+        the WebSocket to be closed before login completes.
+        """
+        import time
+        auth = _make_auth(("slowuser", "pw"))
+        router = _make_router(auth=auth)
+        out = _Capture()
+
+        call_count = [0]
+
+        def _slow_read() -> str:
+            """Blocks for 0.3 s on the first call (menu choice), then returns immediately."""
+            call_count[0] += 1
+            if call_count[0] == 1:
+                time.sleep(0.3)   # simulate slow typing
+            return MENU_QUIT
+
+        async def _run():
+            async with websockets.serve(router.handle, _HOST, _BASE_PORT + 13,
+                                        ping_interval=0.1, ping_timeout=0.5):
+                result = await run_pregame(
+                    _HOST, _BASE_PORT + 13,
+                    "slowuser", "pw",
+                    register=False,
+                    read=_slow_read,
+                    write=out,
+                )
+                return result
+
+        # Must complete without ConnectionClosedError and return None (quit).
+        result = asyncio.run(_run())
+        self.assertIsNone(result)
+        self.assertTrue(any("Logged in" in line for line in out.lines),
+                        f"Expected login confirmation, got: {out.lines}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

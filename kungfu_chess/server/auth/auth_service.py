@@ -12,6 +12,7 @@ from enum import Enum
 import bcrypt
 
 from kungfu_chess.server.auth.db import UserRecord, UserRepository
+from kungfu_chess.server.auth.elo_cache import EloCache
 from kungfu_chess.server.auth.constants import PASSWORD_MAX_LEN
 from kungfu_chess.server.config import AuthConfig
 
@@ -51,14 +52,23 @@ _PASSWORD_MAX_LEN = PASSWORD_MAX_LEN
 
 class AuthService:
     """
-    Handles registration, login, and ELO updates.
+    Handles registration and login.
     Takes a UserRepository so tests can inject InMemoryUserRepository
     without touching a real database or using monkeypatching.
+    Optional EloCache: on successful login the ELO is cached; on cache hit
+    the DB lookup is skipped.  If the cache is unavailable the service
+    falls back to the DB transparently (fail-open).
     """
 
-    def __init__(self, repo: UserRepository, config: AuthConfig) -> None:
+    def __init__(
+        self,
+        repo: UserRepository,
+        config: AuthConfig,
+        elo_cache: EloCache | None = None,
+    ) -> None:
         self._repo = repo
         self._config = config
+        self._cache = elo_cache
 
     async def register(self, username: str, password: str) -> RegisterResult:
         if not username or not password:
@@ -82,6 +92,10 @@ class AuthService:
         return RegisterResult(RegisterStatus.SUCCESS, "registered successfully", user=user)
 
     async def login(self, username: str, password: str) -> LoginResult:
+        # Check Redis cache first — if we have a cached ELO we still need
+        # the password_hash from the DB to verify, so the cache only saves
+        # us the get_user_by_username call when the user is already known.
+        cached_elo = await asyncio.to_thread(self._cache.get, username) if self._cache else None
         user = await asyncio.to_thread(self._repo.get_user_by_username, username)
         if user is None:
             return LoginResult(LoginStatus.INVALID_CREDENTIALS, None)
@@ -90,5 +104,14 @@ class AuthService:
         )
         if not password_matches:
             return LoginResult(LoginStatus.INVALID_CREDENTIALS, None)
-        return LoginResult(LoginStatus.SUCCESS, user)
+        # Populate cache on successful login.
+        elo = cached_elo if cached_elo is not None else user.elo
+        if self._cache is not None:
+            await asyncio.to_thread(self._cache.set, username, user.elo)
+        result_user = UserRecord(
+            username=user.username,
+            password_hash=user.password_hash,
+            elo=elo,
+        )
+        return LoginResult(LoginStatus.SUCCESS, result_user)
 

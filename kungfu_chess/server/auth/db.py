@@ -1,5 +1,5 @@
 """
-SQLite access layer for user persistence.
+SQLite and PostgreSQL access layer for user persistence.
 Fully synchronous — no asyncio. Callers in async code must wrap with asyncio.to_thread.
 Never exposes raw cursors, rows, or SQL to callers.
 """
@@ -44,6 +44,78 @@ class InMemoryUserRepository:
             password_hash=record.password_hash,
             elo=new_elo,
         )
+
+
+# ── PostgreSQL implementation ────────────────────────────────────────────────
+
+class PostgresUserRepository:
+    """
+    PostgreSQL-backed UserRepository.
+    Synchronous — callers must wrap with asyncio.to_thread.
+    Requires psycopg2-binary.
+    """
+
+    def __init__(self, host: str, port: int, user: str, password: str, dbname: str) -> None:
+        import psycopg2
+        import psycopg2.extras
+        self._dsn = (
+            f"host={host} port={port} user={user} password={password} "
+            f"dbname={dbname} connect_timeout=5"
+        )
+        self._psycopg2 = psycopg2
+        self._init_schema()
+
+    def _connect(self):
+        conn = self._psycopg2.connect(self._dsn)
+        conn.autocommit = False
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        username      TEXT PRIMARY KEY,
+                        password_hash TEXT NOT NULL,
+                        elo           INTEGER NOT NULL
+                    )
+                """)
+            conn.commit()
+
+    def get_user_by_username(self, username: str) -> UserRecord | None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT username, password_hash, elo FROM users WHERE username = %s",
+                    (username,),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return UserRecord(username=row[0], password_hash=row[1], elo=row[2])
+
+    def create_user(self, username: str, password_hash: str, elo: int) -> None:
+        import psycopg2
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                try:
+                    cur.execute(
+                        "INSERT INTO users (username, password_hash, elo) VALUES (%s, %s, %s)",
+                        (username, password_hash, elo),
+                    )
+                    conn.commit()
+                except psycopg2.errors.UniqueViolation:
+                    conn.rollback()
+                    raise ValueError(f"Username already exists: {username}")
+
+    def update_elo(self, username: str, new_elo: int) -> None:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE users SET elo = %s WHERE username = %s",
+                    (new_elo, username),
+                )
+            conn.commit()
 
 
 # ── SQLite implementation (production) ───────────────────────────────────────

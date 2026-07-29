@@ -7,15 +7,22 @@ import asyncio
 import logging
 
 from kungfu_chess.server.auth.db import UserRepository
+from kungfu_chess.server.auth.elo_cache import EloCache
 from kungfu_chess.server.config import AuthConfig
 
 logger = logging.getLogger(__name__)
 
 
 class EloService:
-    def __init__(self, repo: UserRepository, config: AuthConfig) -> None:
+    def __init__(
+        self,
+        repo: UserRepository,
+        config: AuthConfig,
+        elo_cache: EloCache | None = None,
+    ) -> None:
         self._repo = repo
         self._config = config
+        self._cache = elo_cache
 
     async def apply_elo_update(self, winner_username: str, loser_username: str) -> None:
         """Updates both players' ELO using the standard formula. K-factor from config."""
@@ -34,3 +41,6 @@ class EloService:
 
         await asyncio.to_thread(self._repo.update_elo, winner_username, new_winner_elo)
         await asyncio.to_thread(self._repo.update_elo, loser_username,  new_loser_elo)
+        if self._cache is not None:
+            await asyncio.to_thread(self._cache.invalidate, winner_username)
+            await asyncio.to_thread(self._cache.invalidate, loser_username)

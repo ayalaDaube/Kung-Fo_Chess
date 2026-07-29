@@ -183,7 +183,7 @@ async def login_or_register(
     await _log_sent(payload)
 
     try:
-        msg = await _recv_until(ws, MSG_LOGGED_IN, MSG_REGISTERED)
+        msg = await _recv_until(ws, MSG_LOGGED_IN, MSG_REGISTERED, timeout_s=30.0)
     except ServerError as exc:
         write(f"Error: {exc.reason}")
         logger.warning("Auth failed for %r: %s", username, exc.reason)
@@ -191,23 +191,7 @@ async def login_or_register(
         return False
     await _log_received(msg)
 
-    if msg["type"] == MSG_REGISTERED:
-        # Registration succeeded — server has already marked the connection as
-        # logged in (Bug A fix), but we still need MSG_LOGGED_IN on the wire
-        # so the client knows the ELO.  Send CMD_LOGIN immediately.
-        logger.info("Registered as %r, auto-logging in", msg.get('username', username))
-        login_payload = {"cmd": CMD_LOGIN, "username": username, "password": password}
-        await ws.send(json.dumps(login_payload))
-        await _log_sent(login_payload)
-        try:
-            msg = await _recv_until(ws, MSG_LOGGED_IN)
-        except ServerError as exc:
-            write(f"Error: {exc.reason}")
-            await _log_received({"type": MSG_ERROR, "reason": exc.reason})
-            return False
-        await _log_received(msg)
-
-    # MSG_LOGGED_IN
+    # MSG_LOGGED_IN or MSG_REGISTERED (both carry username + elo now)
     elo_part = f"  ELO: {msg['elo']}" if "elo" in msg else ""
     write(f"Logged in as {msg.get('username', username)!r}.{elo_part}")
     logger.info("Logged in as %r (elo=%s)", msg.get('username', username), msg.get('elo', 'n/a'))

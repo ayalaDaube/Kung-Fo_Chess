@@ -9,7 +9,9 @@
 *.user
 *.userosscache
 *.sln.docstates
-*.env
+# Ignore .env (real secrets) but keep .env.example (template)
+.env
+!.env.example
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

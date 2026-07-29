@@ -33,6 +33,20 @@ _LOGGING_DEFAULTS = {
     "log_path": "server_activity.log",
 }
 
+_DATABASE_DEFAULTS = {
+    "host": "localhost",
+    "port": 5432,
+    "user": "kungfu",
+    "password": "kungfu",
+    "dbname": "kungfu_chess",
+}
+
+_REDIS_DEFAULTS = {
+    "host": "localhost",
+    "port": 6379,
+    "elo_ttl_seconds": 300,
+}
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -66,6 +80,22 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class DatabaseConfig:
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+
+
+@dataclass(frozen=True)
+class RedisConfig:
+    host: str
+    port: int
+    elo_ttl_seconds: int
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str
     port: int
@@ -74,6 +104,8 @@ class ServerConfig:
     matchmaking: MatchmakingConfig
     stats: StatsConfig
     logging: LoggingConfig
+    database: DatabaseConfig
+    redis: RedisConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -83,12 +115,32 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
             data = json.load(f)
     except FileNotFoundError:
         data = {}
-    merged = {**_DEFAULTS, **data}
+    merged = {
+        **_DEFAULTS,
+        **data,
+        "host": os.environ.get("SERVER_HOST", data.get("host", _DEFAULTS["host"])),
+        "port": int(os.environ.get("SERVER_PORT", data.get("port", _DEFAULTS["port"]))),
+    }
     auth_raw = {**_AUTH_DEFAULTS, **data.get("auth", {})}
     realtime_raw = {**_REALTIME_DEFAULTS, **data.get("realtime", {})}
     mm_raw = {**_MATCHMAKING_DEFAULTS, **data.get("matchmaking", {})}
     stats_raw = {**_STATS_DEFAULTS, **data.get("stats", {})}
     logging_raw = {**_LOGGING_DEFAULTS, **data.get("logging", {})}
+    db_raw = {
+        **_DATABASE_DEFAULTS,
+        "host":     os.environ.get("POSTGRES_HOST",     _DATABASE_DEFAULTS["host"]),
+        "port": int(os.environ.get("POSTGRES_PORT",     str(_DATABASE_DEFAULTS["port"]))),
+        "user":     os.environ.get("POSTGRES_USER",     _DATABASE_DEFAULTS["user"]),
+        "password": os.environ.get("POSTGRES_PASSWORD", _DATABASE_DEFAULTS["password"]),
+        "dbname":   os.environ.get("POSTGRES_DB",       _DATABASE_DEFAULTS["dbname"]),
+        **data.get("database", {}),
+    }
+    redis_raw = {
+        **_REDIS_DEFAULTS,
+        "host": os.environ.get("REDIS_HOST", _REDIS_DEFAULTS["host"]),
+        "port": int(os.environ.get("REDIS_PORT", str(_REDIS_DEFAULTS["port"]))),
+        **data.get("redis", {}),
+    }
     return ServerConfig(
         host=merged["host"],
         port=merged["port"],
@@ -112,5 +164,17 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
         ),
         logging=LoggingConfig(
             log_path=logging_raw["log_path"],
+        ),
+        database=DatabaseConfig(
+            host=db_raw["host"],
+            port=db_raw["port"],
+            user=db_raw["user"],
+            password=db_raw["password"],
+            dbname=db_raw["dbname"],
+        ),
+        redis=RedisConfig(
+            host=redis_raw["host"],
+            port=redis_raw["port"],
+            elo_ttl_seconds=redis_raw["elo_ttl_seconds"],
         ),
     )
