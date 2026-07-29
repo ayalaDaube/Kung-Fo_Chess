@@ -1,12 +1,13 @@
 name: Verify Docker Compose setup
-
 on: [push]
-
 jobs:
   docker-compose-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Create .env
+        run: cp .env.example .env
 
       - name: Build and start services
         run: docker compose up --build -d
