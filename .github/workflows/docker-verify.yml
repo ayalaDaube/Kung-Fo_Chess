@@ -17,9 +17,52 @@ jobs:
           timeout 60s sh -c 'until docker compose ps | grep -q "healthy"; do sleep 2; done'
           docker compose ps
 
-      - name: Show server logs
+      - name: Show server logs (startup)
+        run: docker compose logs server
+
+      - name: Set up Python for smoke test
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install smoke test dependencies
+        run: pip install websockets
+
+      - name: Run real register/login smoke test
+        id: smoke
+        run: |
+          python3 scripts/ci_smoke_test.py | tee smoke_output.txt
+          username=$(grep '^SMOKE_TEST_USERNAME=' smoke_output.txt | cut -d= -f2)
+          echo "username=$username" >> "$GITHUB_OUTPUT"
+
+      - name: Verify user row exists in Postgres
+        run: |
+          docker compose exec -T postgres psql -U kungfu -d kungfu_chess -c \
+            "SELECT username, elo FROM users WHERE username = '${{ steps.smoke.outputs.username }}';"
+          # Fail the step if no row was returned.
+          count=$(docker compose exec -T postgres psql -U kungfu -d kungfu_chess -tAc \
+            "SELECT COUNT(*) FROM users WHERE username = '${{ steps.smoke.outputs.username }}';")
+          echo "matching rows: $count"
+          test "$count" = "1"
+
+      - name: Verify ELO cache key exists in Redis
+        run: |
+          docker compose exec -T redis redis-cli GET "elo:${{ steps.smoke.outputs.username }}"
+          exists=$(docker compose exec -T redis redis-cli EXISTS "elo:${{ steps.smoke.outputs.username }}")
+          echo "key exists: $exists"
+          test "$(echo "$exists" | tr -d '\r')" = "1"
+
+      - name: Show server logs (full run)
+        if: always()
         run: docker compose logs server
 
       - name: Tear down
         if: always()
-        run: docker compose down
+        run: docker compose down -v
+
+      - name: Restart cleanly (verify no leftover state breaks a second run)
+        run: |
+          docker compose up --build -d
+          timeout 60s sh -c 'until docker compose ps | grep -q "healthy"; do sleep 2; done'
+          docker compose ps
+          docker compose down -v
