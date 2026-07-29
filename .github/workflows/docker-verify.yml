@@ -1,0 +1,24 @@
+name: Verify Docker Compose setup
+
+on: [push]
+
+jobs:
+  docker-compose-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start services
+        run: docker compose up --build -d
+
+      - name: Wait for services to be healthy
+        run: |
+          timeout 60s sh -c 'until docker compose ps | grep -q "healthy"; do sleep 2; done'
+          docker compose ps
+
+      - name: Show server logs
+        run: docker compose logs server
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
