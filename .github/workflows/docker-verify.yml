@@ -14,15 +14,7 @@ jobs:
 
       - name: Wait for services to be healthy
         run: |
-          timeout 90s bash -c '
-            until docker compose ps --format json | python3 - <<EOF
-import sys, json
-lines = sys.stdin.read().strip().splitlines()
-services = [json.loads(l) for l in lines if l.strip()]
-sys.exit(0 if services and all(s.get("Health") == "healthy" for s in services) else 1)
-EOF
-            do sleep 3; done
-          '
+          timeout 90s bash -c 'until [ "$(docker compose ps --status running --format "{{.Health}}" | grep -cv healthy)" = "0" ]; do sleep 3; done'
           docker compose ps
 
       - name: Show service logs (startup)
@@ -71,14 +63,6 @@ EOF
       - name: Restart cleanly (verify no leftover state breaks a second run)
         run: |
           docker compose up --build -d
-          timeout 90s bash -c '
-            until docker compose ps --format json | python3 - <<EOF
-import sys, json
-lines = sys.stdin.read().strip().splitlines()
-services = [json.loads(l) for l in lines if l.strip()]
-sys.exit(0 if services and all(s.get("Health") == "healthy" for s in services) else 1)
-EOF
-            do sleep 3; done
-          '
+          timeout 90s bash -c 'until [ "$(docker compose ps --status running --format "{{.Health}}" | grep -cv healthy)" = "0" ]; do sleep 3; done'
           docker compose ps
           docker compose down -v
