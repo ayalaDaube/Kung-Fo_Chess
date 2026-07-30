@@ -440,14 +440,14 @@ class TestRunPregameRoomPath(unittest.TestCase):
                     write=out,
                 )
                 if result:
-                    ws, room_id, role, color = result
+                    ws, room_id, role, color, *_ = result
                     router.cancel_room(room_id)
                     await ws.close()
                 return result
 
         result = asyncio.run(_run())
         self.assertIsNotNone(result)
-        ws, room_id, role, color = result
+        ws, room_id, role, color, *_ = result
         self.assertTrue(len(room_id) > 0)
         self.assertEqual(role, "player")
 

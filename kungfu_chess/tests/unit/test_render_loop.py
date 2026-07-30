@@ -45,7 +45,7 @@ class _FakeRenderer:
         self.rendered_snapshots: list = []
 
     def render(self, snapshot, delta_ms=0, countdown_ms=None, error_message=None,
-               my_color=None) -> _FakeFrame:
+               my_color=None, **kwargs) -> _FakeFrame:
         self.error_messages.append(error_message)
         self.rendered_snapshots.append(snapshot)
         return _FakeFrame()

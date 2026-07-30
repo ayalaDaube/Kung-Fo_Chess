@@ -64,6 +64,7 @@ async def run_render_loop(
     command_queue: Optional[asyncio.Queue] = None,
     pop_error: Callable[[], Optional[str]] = lambda: None,
     my_color: Any = None,
+    player_names: dict | None = None,
     activity_logger: "ClientActivityLogger | None" = None,
 ) -> None:
     """
@@ -161,6 +162,7 @@ async def run_render_loop(
                 countdown_ms=_local_countdown,
                 error_message=_error_text if _error_remaining_ms > 0 else None,
                 my_color=my_color,
+                player_names=player_names,
             )
             show_frame(window_title, frame.img)
 

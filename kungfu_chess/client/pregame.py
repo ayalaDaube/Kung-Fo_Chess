@@ -454,14 +454,14 @@ async def run_pregame(
             if result is None:
                 continue
             room_id = result["room_id"]
-            return ws, room_id, "player", result.get("color")
+            return ws, room_id, "player", result.get("color"), username, result.get("opponent")
 
         if choice == MENU_ROOM:
             result = await room_flow(ws, username, read=read, write=write,
                                      activity_logger=activity_logger)
             if result is not None:
                 room_id, role, color = result
-                return ws, room_id, role, color
+                return ws, room_id, role, color, username, None
             continue
 
         write(f"Unknown choice {choice!r}. Please enter {MENU_PLAY}, {MENU_ROOM}, or {MENU_QUIT}.")

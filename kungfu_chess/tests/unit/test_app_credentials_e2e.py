@@ -194,7 +194,7 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                     write=lambda m: output.append(m),
                 )
                 if result:
-                    ws, room_id, role, color = result
+                    ws, room_id, role, color, *_ = result
                     joined_room.append(room_id)
                     router.cancel_room(room_id)
                     await ws.close()
@@ -265,14 +265,14 @@ class TestAsyncMainCredentialFlow(unittest.TestCase):
                     write=lambda m: output.append(m),
                 )
                 if result:
-                    ws, room_id, role, color = result
+                    ws, room_id, role, color, *_ = result
                     router.cancel_room(room_id)
                     await ws.close()
                 return result
 
         result = asyncio.run(_run())
         self.assertIsNotNone(result)
-        _, room_id, role, _ = result
+        _, room_id, role, *_ = result
         self.assertEqual(role, "player")
         self.assertTrue(len(room_id) > 0)
 

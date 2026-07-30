@@ -23,8 +23,9 @@ class HudLayer:
 
     def draw(self, canvas: Img, snapshot: GameSnapshot, canvas_h: int,
              countdown_ms: int | None = None, error_message: str | None = None,
-             my_color: PieceColor | None = None) -> None:
-        self._draw_scores(canvas, snapshot)
+             my_color: PieceColor | None = None,
+             player_names: dict | None = None) -> None:
+        self._draw_scores(canvas, snapshot, player_names or {})
         if snapshot.game_over:
             self._draw_game_over(canvas, canvas_h, snapshot.winner_color, my_color)
         elif countdown_ms is not None:
@@ -32,17 +33,22 @@ class HudLayer:
         elif error_message:
             self._draw_error(canvas, canvas_h, error_message, my_color)
 
-    def _draw_scores(self, canvas: Img, snapshot: GameSnapshot) -> None:
+    def _draw_scores(self, canvas: Img, snapshot: GameSnapshot, player_names: dict) -> None:
         cs         = self._cell_size
         pad        = cs // COORD_PAD_DIVISOR
         fsz        = cs / SCORE_FONT_RATIO
         cx         = self._canvas_w // 2 - int(cs * SCORE_X_RATIO)
         board_h_px = snapshot.board_height * cs
 
-        canvas.put_text(f"Score: {snapshot.scores.get(PieceColor.BLACK, 0)}",
+        black_name = player_names.get(PieceColor.BLACK, "")
+        white_name = player_names.get(PieceColor.WHITE, "")
+        black_label = f"{black_name}  Score: {snapshot.scores.get(PieceColor.BLACK, 0)}" if black_name else f"Score: {snapshot.scores.get(PieceColor.BLACK, 0)}"
+        white_label = f"{white_name}  Score: {snapshot.scores.get(PieceColor.WHITE, 0)}" if white_name else f"Score: {snapshot.scores.get(PieceColor.WHITE, 0)}"
+
+        canvas.put_text(black_label,
                         cx, self._offset_y - pad // 2,
                         font_size=fsz, color=self._header_color, thickness=2)
-        canvas.put_text(f"Score: {snapshot.scores.get(PieceColor.WHITE, 0)}",
+        canvas.put_text(white_label,
                         cx, self._offset_y + board_h_px + pad,
                         font_size=fsz, color=self._header_color, thickness=2)
 

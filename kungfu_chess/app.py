@@ -136,10 +136,18 @@ async def async_main(
         logger.info("Pre-game exited without joining a room.")
         return
 
-    ws, room_id, role, color = result
+    ws, room_id, role, color, my_username, opponent_username = result
     is_player = (role == "player")
     my_color = PieceColor(color) if color is not None else None
     logger.info("Joined room %s as %s (color=%s)", room_id, role, color)
+
+    # Build player_names for the HUD: my color → my name, other color → opponent name.
+    player_names: dict = {}
+    if my_color is not None and my_username:
+        player_names[my_color] = my_username
+    if my_color is not None and opponent_username:
+        other_color = PieceColor.BLACK if my_color == PieceColor.WHITE else PieceColor.WHITE
+        player_names[other_color] = opponent_username
 
     # ── Step 4: open the graphical window ─────────────────────────────────────
     cv2.namedWindow(cfg.window_title, cv2.WINDOW_NORMAL)
@@ -176,6 +184,7 @@ async def async_main(
         command_queue=command_queue,
         pop_error=receiver.pop_error,
         my_color=my_color,
+        player_names=player_names,
         activity_logger=activity_logger,
     )
 
