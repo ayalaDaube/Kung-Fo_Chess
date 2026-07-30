@@ -17,8 +17,8 @@ jobs:
           timeout 60s sh -c 'until docker compose ps | grep -q "healthy"; do sleep 2; done'
           docker compose ps
 
-      - name: Show server logs (startup)
-        run: docker compose logs server
+      - name: Show service logs (startup)
+        run: docker compose logs
 
       - name: Set up Python for smoke test
         uses: actions/setup-python@v5
@@ -52,9 +52,9 @@ jobs:
           echo "key exists: $exists"
           test "$(echo "$exists" | tr -d '\r')" = "1"
 
-      - name: Show server logs (full run)
+      - name: Show service logs (full run)
         if: always()
-        run: docker compose logs server
+        run: docker compose logs
 
       - name: Tear down
         if: always()
