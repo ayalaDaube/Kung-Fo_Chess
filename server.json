@@ -3,5 +3,8 @@
     "port": 8765,
     "realtime": {
         "tick_interval_ms": 50
+    },
+    "allocator": {
+        "shard_address": "ws://localhost:8765"
     }
 }

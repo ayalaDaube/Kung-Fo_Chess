@@ -47,6 +47,13 @@ _REDIS_DEFAULTS = {
     "elo_ttl_seconds": 300,
 }
 
+_ALLOCATOR_DEFAULTS = {
+    # Address this shard advertises to the Room Directory.
+    # In a multi-shard deployment each shard sets this to its own address.
+    # Overridable via SHARD_ADDRESS env var or server.json "allocator" section.
+    "shard_address": "ws://localhost:8765",
+}
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -96,6 +103,11 @@ class RedisConfig:
 
 
 @dataclass(frozen=True)
+class AllocatorConfig:
+    shard_address: str
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     host: str
     port: int
@@ -106,6 +118,7 @@ class ServerConfig:
     logging: LoggingConfig
     database: DatabaseConfig
     redis: RedisConfig
+    allocator: AllocatorConfig
 
 
 def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
@@ -140,6 +153,11 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
         "host": os.environ.get("REDIS_HOST", _REDIS_DEFAULTS["host"]),
         "port": int(os.environ.get("REDIS_PORT", str(_REDIS_DEFAULTS["port"]))),
         **data.get("redis", {}),
+    }
+    allocator_raw = {
+        **_ALLOCATOR_DEFAULTS,
+        "shard_address": os.environ.get("SHARD_ADDRESS", _ALLOCATOR_DEFAULTS["shard_address"]),
+        **data.get("allocator", {}),
     }
     return ServerConfig(
         host=merged["host"],
@@ -176,5 +194,8 @@ def load_server_config(path: str = _CONFIG_PATH) -> ServerConfig:
             host=redis_raw["host"],
             port=redis_raw["port"],
             elo_ttl_seconds=redis_raw["elo_ttl_seconds"],
+        ),
+        allocator=AllocatorConfig(
+            shard_address=allocator_raw["shard_address"],
         ),
     )

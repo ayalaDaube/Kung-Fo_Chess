@@ -49,6 +49,8 @@ class RoomManager:
         make_broadcast: Callable[[str], BroadcastFn],
         send_raw: SendRawFn | None = None,
         activity_logger: ActivityLogger | None = None,
+        game_allocator=None,   # GameAllocator | None
+        room_directory=None,   # RoomDirectory | None
     ) -> None:
         self._session_factory = session_factory
         self._realtime_config = realtime_config
@@ -59,6 +61,8 @@ class RoomManager:
         self._make_broadcast = make_broadcast
         self._send_raw = send_raw
         self._activity_logger = activity_logger
+        self._game_allocator = game_allocator
+        self._room_directory = room_directory
 
         self._rooms: dict[str, GameSession] = {}
         self._tick_loops: dict[str, TickLoop] = {}
@@ -70,6 +74,11 @@ class RoomManager:
 
     async def create_room(self, room_id: str | None = None) -> str:
         rid = room_id or self._room_id_generator()
+        # Ask the allocator which shard hosts this room, then record it.
+        if self._game_allocator is not None:
+            shard_address = self._game_allocator.allocate_shard(rid)
+            if self._room_directory is not None:
+                self._room_directory.set(rid, shard_address)
         session = self._session_factory()
         session.game_id = rid
         self._rooms[rid] = session
@@ -91,6 +100,8 @@ class RoomManager:
         del self._tick_loops[room_id]
         del self._rooms[room_id]
         self._registry.remove_room_entries(room_id)
+        if self._room_directory is not None:
+            self._room_directory.delete(room_id)
         logger.info("Room cancelled: %s", room_id)
         return True
 
@@ -109,6 +120,19 @@ class RoomManager:
         username: str = "",
         disconnect_monitors: dict | None = None,
     ) -> None:
+        # Look up which shard hosts this room before proceeding.
+        # Today this always resolves to the local shard (single-shard deployment),
+        # but the lookup path is real — not bypassed.
+        if self._room_directory is not None:
+            shard_address = self._room_directory.get(room_id)
+            if shard_address is None and room_id in self._rooms:
+                # Room exists locally but directory entry is missing (e.g. Redis
+                # was restarted).  Re-register so the directory stays consistent.
+                if self._game_allocator is not None:
+                    shard_address = self._game_allocator.allocate_shard(room_id)
+                    self._room_directory.set(room_id, shard_address)
+            logger.debug("Room %r -> shard %s", room_id, shard_address)
+
         session = self._rooms.get(room_id)
         if session is None:
             await self._send(conn_id, {"type": "error", "reason": f"room {room_id!r} not found"})

@@ -77,6 +77,8 @@ class WsGateway:
         matchmaking_config: MatchmakingConfig | None = None,
         room_id_generator: RoomIdGenerator = _default_room_id_generator,
         activity_logger: ActivityLogger | None = None,
+        game_allocator=None,   # GameAllocator | None
+        room_directory=None,   # RoomDirectory | None
     ) -> None:
         self._realtime_config = realtime_config
         self._activity_logger = activity_logger
@@ -93,6 +95,8 @@ class WsGateway:
             make_broadcast=self._make_broadcast,
             send_raw=self._send_raw,
             activity_logger=activity_logger,
+            game_allocator=game_allocator,
+            room_directory=room_directory,
         )
 
         self._disconnect_coordinator = DisconnectCoordinator(

@@ -60,6 +60,8 @@ class ConnectionRouter:
         matchmaking_config: MatchmakingConfig | None = None,
         room_id_generator: RoomIdGenerator = _default_room_id_generator,
         activity_logger: ActivityLogger | None = None,
+        game_allocator=None,   # GameAllocator | None
+        room_directory=None,   # RoomDirectory | None
     ) -> None:
         self._realtime_config = realtime_config
         self._registry = ConnectionRegistry()
@@ -86,6 +88,8 @@ class ConnectionRouter:
             matchmaking_config=matchmaking_config,
             room_id_generator=room_id_generator,
             activity_logger=activity_logger,
+            game_allocator=game_allocator,
+            room_directory=room_directory,
         )
 
     # ── async send helper used by ApiGateway before WsGateway is wired ───────

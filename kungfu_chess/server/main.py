@@ -14,6 +14,8 @@ from kungfu_chess.server.auth.elo_cache import EloCache
 from kungfu_chess.server.bus.event_bus import EventBus
 from kungfu_chess.server.logging_.activity_logger import ActivityLogger
 from kungfu_chess.server.network.connection_router import ConnectionRouter
+from kungfu_chess.server.allocator.game_allocator import GameAllocator
+from kungfu_chess.server.allocator.room_directory import RoomDirectory
 from kungfu_chess.server.session.game_session import GameSession
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +58,12 @@ async def _main() -> None:
     def _session_factory() -> GameSession:
         return GameSession(bus=EventBus(), piece_scores=config.stats.piece_scores)
 
+    game_allocator = GameAllocator(config=config.allocator)
+    room_directory = RoomDirectory(
+        host=config.redis.host,
+        port=config.redis.port,
+    )
+
     router = ConnectionRouter(
         session_factory=_session_factory,
         realtime_config=config.realtime,
@@ -63,6 +71,8 @@ async def _main() -> None:
         elo_service=elo_service,
         matchmaking_config=config.matchmaking,
         activity_logger=activity_logger,
+        game_allocator=game_allocator,
+        room_directory=room_directory,
     )
 
     async with websockets.serve(router.handle, config.host, config.port):
