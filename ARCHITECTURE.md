@@ -158,6 +158,13 @@ No shared mutable state across rooms. `ConnectionRouter` holds `dict[room_id, Ga
 plus one `TickLoop` per room. `ActivityLogger` is the one deliberately-shared object across
 rooms — safe, because it's a stateless append-only file writer, not a room-keyed cache.
 
+`TickLoop` uses **broadcast-on-change**: it compares the serialised snapshot JSON to the
+last-broadcast value and skips the send when nothing changed. This avoids flooding clients
+with identical frames every 50 ms when the board is idle — the fixed-20 Hz unconditional
+broadcast model is ~3.2 Tbps in aggregate at 10 M clients (see `Server_Design_Updated.md`
+§3); broadcast-on-change cuts that to ~80 Gbps (~97.5% reduction). The first snapshot
+after each state change is always sent immediately.
+
 ### 5.4 Wire protocol lives in exactly one place
 Every message is `{"cmd": ...}` (client→server) or `{"type": ...}` (server→client) JSON.
 All `CMD_*`/`MSG_*` string constants and every typed `Command` dataclass are defined in

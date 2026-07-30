@@ -18,6 +18,7 @@ from kungfu_chess.server.network.protocol import (
     MSG_ASSIGNED, MSG_ROOM_JOINED,
     MSG_OPPONENT_RECONNECTED,
 )
+from kungfu_chess.server.network.serialization import snapshot_to_json
 from kungfu_chess.server.session.game_session import GameSession
 from kungfu_chess.server.session.tick_loop import TickLoop
 
@@ -25,9 +26,10 @@ logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], GameSession]
 RoomIdGenerator = Callable[[], str]
-SendFn = Callable[[str, dict], None]          # async (conn_id, payload)
+SendFn = Callable[[str, dict], None]           # async (conn_id, payload)
+SendRawFn = Callable[[str, str], None]         # async (conn_id, raw_json)
 SendToOthersFn = Callable[[str, str, dict], None]  # async (room_id, exclude, payload)
-BroadcastFn = Callable[[str, str], None]      # async (room_id, raw_json)
+BroadcastFn = Callable[[str, str], None]       # async (room_id, raw_json)
 
 
 class RoomManager:
@@ -45,6 +47,7 @@ class RoomManager:
         send: SendFn,
         send_to_others: SendToOthersFn,
         make_broadcast: Callable[[str], BroadcastFn],
+        send_raw: SendRawFn | None = None,
         activity_logger: ActivityLogger | None = None,
     ) -> None:
         self._session_factory = session_factory
@@ -54,6 +57,7 @@ class RoomManager:
         self._send = send
         self._send_to_others = send_to_others
         self._make_broadcast = make_broadcast
+        self._send_raw = send_raw
         self._activity_logger = activity_logger
 
         self._rooms: dict[str, GameSession] = {}
@@ -126,6 +130,7 @@ class RoomManager:
             color = session.color_for(conn_id)
             await self._send(conn_id, {"type": MSG_ROOM_JOINED, "room_id": room_id, "role": "player"})
             await self._send(conn_id, {"type": MSG_ASSIGNED, "color": color.value})
+            await self._send_snapshot_to(conn_id, session)
             return
 
         if not session.players_full():
@@ -137,6 +142,29 @@ class RoomManager:
         else:
             session.add_spectator(conn_id)
             await self._send(conn_id, {"type": MSG_ROOM_JOINED, "room_id": room_id, "role": "spectator"})
+
+        await self._send_snapshot_to(conn_id, session)
+
+    # ── snapshot helper ───────────────────────────────────────────────────────
+
+    async def _send_snapshot_to(self, conn_id: str, session: GameSession) -> None:
+        """
+        Send the current snapshot directly to one connection.
+
+        Called immediately after a join so the joiner sees the board state
+        regardless of whether TickLoop has broadcast recently.  This is
+        necessary because TickLoop now skips broadcasts when the snapshot
+        hasn't changed — a joiner on a quiet board would otherwise see
+        nothing until the next real state change.
+        """
+        raw = snapshot_to_json(session.build_snapshot())
+        if self._send_raw is not None:
+            await self._send_raw(conn_id, raw)
+        else:
+            # Fallback: parse back to dict and use the dict send path.
+            # Callers that care about efficiency should inject send_raw.
+            import json
+            await self._send(conn_id, json.loads(raw))
 
     # ── logger wiring ─────────────────────────────────────────────────────────
 

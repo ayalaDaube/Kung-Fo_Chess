@@ -258,7 +258,9 @@ class TestRoomIsolation(unittest.TestCase):
         ws_b = run(_go())
         snapshots_b = [json.loads(m) for m in ws_b.sent
                        if json.loads(m).get("type") == MSG_SNAPSHOT]
-        self.assertEqual(len(snapshots_b), 0)
+        # ws_b receives exactly one snapshot: the join-time snapshot sent by
+        # handle_join_room.  The move in room A must NOT add any more.
+        self.assertEqual(len(snapshots_b), 1)
 
 
 class TestGameCommandsWithoutRoom(unittest.TestCase):

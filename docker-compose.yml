@@ -27,9 +27,10 @@ services:
   server:
     build: .
     ports:
-      - "8765:8765"
+      - "${SERVER_PORT:-8765}:${SERVER_PORT:-8765}"
     environment:
       SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: ${SERVER_PORT:-8765}
       DB_BACKEND: ${DB_BACKEND}
       POSTGRES_HOST: ${POSTGRES_HOST}
       POSTGRES_PORT: ${POSTGRES_PORT}

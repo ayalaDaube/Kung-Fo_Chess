@@ -139,6 +139,64 @@ class TestTickLoopLifecycle(unittest.TestCase):
         loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_20)
         self.assertAlmostEqual(loop._interval_s, 0.020, places=5)
 
+    def test_no_duplicate_broadcast_when_snapshot_unchanged(self):
+        """
+        TickLoop must NOT broadcast on ticks where the snapshot JSON is
+        identical to the last broadcast.  FakeSession.build_snapshot() always
+        returns the same value, so after the first broadcast every subsequent
+        tick must be suppressed.
+        """
+        session = FakeSession()
+        broadcasts = []
+
+        async def _broadcast(msg): broadcasts.append(msg)
+
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
+
+        async def _run():
+            loop.start()
+            await asyncio.sleep(0.055)  # ~5 ticks at 10 ms
+            loop.stop()
+
+        run(_run())
+        # Snapshot never changes, so exactly 1 broadcast should have occurred.
+        self.assertEqual(len(broadcasts), 1)
+
+    def test_broadcast_resumes_when_snapshot_changes(self):
+        """
+        After a period of no change, a new distinct snapshot must be broadcast.
+        """
+        session = FakeSession()
+        broadcasts = []
+        call_count = [0]
+
+        # Return a different snapshot starting from the 2nd build_snapshot call.
+        original_build = session.build_snapshot
+        def _varying_snapshot():
+            call_count[0] += 1
+            if call_count[0] >= 2:
+                from kungfu_chess.model.game_state import GameSnapshot
+                return GameSnapshot(
+                    board_width=8, board_height=8,
+                    pieces=[], selected_cell=None,
+                    game_over=True, airborne_pos=None,
+                )
+            return original_build()
+        session.build_snapshot = _varying_snapshot
+
+        async def _broadcast(msg): broadcasts.append(msg)
+
+        loop = TickLoop(session=session, broadcast=_broadcast, config=_CFG_10)
+
+        async def _run():
+            loop.start()
+            await asyncio.sleep(0.08)  # ~8 ticks at 10 ms — enough margin on Windows
+            loop.stop()
+
+        run(_run())
+        # Tick 1: initial snapshot broadcast. Tick 2+: changed snapshot broadcast once.
+        self.assertGreaterEqual(len(broadcasts), 2)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

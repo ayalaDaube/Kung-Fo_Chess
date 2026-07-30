@@ -57,12 +57,15 @@ class TickLoop:
 
     async def _run(self) -> None:
         interval_ms = int(self._interval_s * 1000)
+        last_broadcast: str | None = None
         try:
             while True:
                 await asyncio.sleep(self._interval_s)
                 self._session.tick(interval_ms)
                 snapshot_json = snapshot_to_json(self._session.build_snapshot())
-                await self._broadcast(snapshot_json)
+                if snapshot_json != last_broadcast:
+                    await self._broadcast(snapshot_json)
+                    last_broadcast = snapshot_json
         except asyncio.CancelledError:
             pass
         except Exception:
